@@ -43,7 +43,7 @@ impl TempFile {
 
 impl TempFileManager {
 
-    pub fn new(_directory: &Path) -> Self {
+    pub fn new() -> Self {
         Self{}
     }
 

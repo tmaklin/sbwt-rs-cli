@@ -1,4 +1,4 @@
-use std::{io::{BufReader, Seek, Read}, fs::File};
+use std::io::{BufReader, Seek, Read};
 
 use simple_sds_sbwt::{ops::Access, raw_vector::AccessRaw};
 use std::io::SeekFrom;
@@ -341,7 +341,7 @@ mod tests{
             (LongKmer::<2>::from_ascii(b"GGTT").unwrap(),3),
         ];
 
-        let mut temp_file_manager = crate::tempfile::TempFileManager::new(std::path::Path::new("temp"));
+        let mut temp_file_manager = crate::tempfile::TempFileManager::new();
 
         let mut nondummy_file = temp_file_manager.create_new_file("test-", 10, ".nondummy");
         let mut dummy_file = temp_file_manager.create_new_file("test-", 10, ".dummy");

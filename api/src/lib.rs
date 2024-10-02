@@ -33,8 +33,7 @@
 //!     .k(6).n_threads(4).build_lcs(true).add_rev_comp(true)
 //!     .algorithm(BitPackedKmerSorting::new()
 //!         .mem_gb(2)
-//!         .dedup_batches(false)
-//!         .temp_dir(Path::new("./temp")))
+//!         .dedup_batches(false))
 //!     .run(seq_stream);
 //!
 //! // Query a k-mer

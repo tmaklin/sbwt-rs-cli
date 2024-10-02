@@ -51,7 +51,6 @@ pub trait SbwtConstructionAlgorithm {
 pub struct BitPackedKmerSorting{
     mem_gb: usize,
     dedup_batches: bool,
-    temp_dir: std::path::PathBuf,
 }
 
 impl BitPackedKmerSorting {
@@ -61,7 +60,7 @@ impl BitPackedKmerSorting {
     /// - do not deduplicate k-mer batches before sorting.
     /// - use the current directory as the temporary directory.
     pub fn new() -> Self {
-        Self{mem_gb: 4, dedup_batches: false, temp_dir: std::path::PathBuf::from_str(".").unwrap()}
+        Self{mem_gb: 4, dedup_batches: false}
     }
 
     /// Set the amount of memory to use in gigabytes. This is not strictly enforced, but the algorithm will try to stay within this limit.
@@ -75,20 +74,13 @@ impl BitPackedKmerSorting {
         self.dedup_batches = enable;
         self
     }
-
-    /// Set the temporary directory where the algorithm can store temporary files.
-    pub fn temp_dir(mut self, temp_dir: &std::path::Path) -> Self {
-        self.temp_dir = temp_dir.to_path_buf();
-        std::fs::create_dir_all(&self.temp_dir).unwrap();
-        self
-    }
 }
 
 impl SbwtConstructionAlgorithm for BitPackedKmerSorting {
     fn run<SS: SeqStream + Send>(self, input: SS, k: usize, n_threads: usize, build_lcs: bool) -> (SbwtIndex<SubsetMatrix>, Option<LcsArray>) {
         let mem_gb = self.mem_gb;
         let dedup_batches = self.dedup_batches;
-        let mut temp_file_manager = crate::tempfile::TempFileManager::new(&self.temp_dir);
+        let mut temp_file_manager = crate::tempfile::TempFileManager::new();
         match k {
             0..=32 => {
                 crate::bitpacked_kmer_sorting::build_with_bitpacked_kmer_sorting::<1,_,SubsetMatrix>(input, k, mem_gb, n_threads, dedup_batches, build_lcs, &mut temp_file_manager)
