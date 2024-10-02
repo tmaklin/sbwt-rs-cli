@@ -3,7 +3,7 @@ use super::kmer_chunk::KmerChunk;
 use crate::tempfile::{TempFile, TempFileManager};
 use crate::util::DNA_ALPHABET;
 use std::io::{BufWriter, Seek, Write};
-use std::thread;
+use std::borrow::BorrowMut;
 
 fn colex_sorted_binmers(bin_prefix_len: usize) -> Vec<Vec<u8>> {
     let mut binmers = Vec::<Vec<u8>>::new();
@@ -31,133 +31,111 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
     // b = m / (64bt)
 
     // Wrap to scope to be able to borrow seqs for the producer thread even when it's not 'static.
-    std::thread::scope(|scope| {
+    let bin_prefix_len = 3_usize; // If you update this you must update all the logic below
+    let n_bins = (4_usize).pow(bin_prefix_len as u32); // 64
+    let producer_buf_size = 1_000_000_usize; // TODO: respect this
+   let encoder_bin_buf_size = mem_gb as u64 * (1_usize << 30) as u64 / ((n_bins as u64 * LongKmer::<B>::byte_size() as u64) * n_threads as u64);
 
-        let bin_prefix_len = 3_usize; // If you update this you must update all the logic below
-        let n_bins = (4_usize).pow(bin_prefix_len as u32); // 64
-        let producer_buf_size = 1_000_000_usize; // TODO: respect this
-        let encoder_bin_buf_size = mem_gb * (1_usize << 30) / ((n_bins * LongKmer::<B>::byte_size()) * n_threads);
+    log::info!("Splitting k-mers into {} bins", n_bins);
+    let mut bin_buffers = vec![Vec::<LongKmer::<B>>::new(); n_bins];
+    for buf in bin_buffers.iter_mut(){
+        buf.reserve_exact(encoder_bin_buf_size.try_into().unwrap());
+    }
 
-        log::info!("Splitting k-mers into {} bins", n_bins);
-        log::info!("Bin buffer size: {}", encoder_bin_buf_size);
-
-        use crossbeam::crossbeam_channel::bounded;
-        let (parser_out, encoder_in) = bounded(4);
-        let (encoder_out, writer_in) = bounded(4);
-
-        // Create producer
-        let producer_handle = scope.spawn(move || {
-            let mut buf = Vec::<Box<[u8]>>::new();
-            let mut current_total_buffer_size = 0_usize;
-            
-            while let Some(seq) = seqs.stream_next(){
-                current_total_buffer_size += seq.len();
-                let mut seq_copy = seq.to_owned();
-                seq_copy.reverse(); // Reverse to get colex sorting
-                buf.push(seq_copy.into_boxed_slice());
-                if current_total_buffer_size > producer_buf_size{
-                    let mut sendbuf = Vec::<Box<[u8]>>::new();
-                    std::mem::swap(&mut sendbuf, &mut buf);
-                    parser_out.send(sendbuf).unwrap();
-                    current_total_buffer_size = 0;
+    let mut current_total_buffer_size = 0_usize;
+    let mut buf = Vec::<Box<[u8]>>::new();
+    while let Some(seq) = seqs.stream_next() {
+        current_total_buffer_size += seq.len();
+	let mut seq_copy = seq.to_owned();
+        seq_copy.reverse(); // Reverse to get colex sorting
+        buf.push(seq_copy.into_boxed_slice());
+        if current_total_buffer_size > producer_buf_size {
+            for seq in &buf {
+                for kmer in seq.windows(k){
+                    match LongKmer::<B>::from_ascii(kmer) {
+                        Ok(kmer) => {
+                            let bin_id = kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize; // Interpret nucleotides in base-4
+                            bin_buffers[bin_id].push(kmer);
+                            if bin_buffers[bin_id].len() == encoder_bin_buf_size.try_into().unwrap(){
+                                if dedup_batches{
+                                    bin_buffers[bin_id].sort_unstable();
+                                    bin_buffers[bin_id].dedup();
+                                }
+                            }
+                        }
+                        Err(KmerEncodingError::InvalidNucleotide(_)) => (), // Ignore
+                        Err(KmerEncodingError::TooLong(_)) => panic!("k = {} is too long", k),
+                    }
                 }
             }
-            
-            parser_out.send(buf).unwrap();
-            drop(parser_out);
-        });
-
-        // Create encoder-splitters
-        let mut encoder_handles = Vec::<thread::JoinHandle::<()>>::new();
-        for _ in 0..n_threads{
-            let receiver_clone = encoder_in.clone();
-            let sender_clone = encoder_out.clone();
-            encoder_handles.push(std::thread::spawn(move || {
-                let mut bin_buffers = vec![Vec::<LongKmer::<B>>::new(); n_bins];
-                for buf in bin_buffers.iter_mut(){
-                    buf.reserve_exact(encoder_bin_buf_size);
-                }
-                while let Ok(batch) = receiver_clone.recv(){
-                    for seq in batch{
-                        for kmer in seq.windows(k){
-                            match LongKmer::<B>::from_ascii(kmer) {
-                                Ok(kmer) => {
-                                    let bin_id = kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize; // Interpret nucleotides in base-4
-                                    bin_buffers[bin_id].push(kmer);
-                                    if bin_buffers[bin_id].len() == encoder_bin_buf_size{
-                                        if dedup_batches{
-                                            bin_buffers[bin_id].sort_unstable();
-                                            bin_buffers[bin_id].dedup();
-                                        }
-                                        sender_clone.send(bin_buffers[bin_id].clone()).unwrap();
-                                        bin_buffers[bin_id].clear();
-                                    }
-                                }
-                                Err(KmerEncodingError::InvalidNucleotide(_)) => (), // Ignore
-                                Err(KmerEncodingError::TooLong(_)) => panic!("k = {} is too long", k),
-                            }        
+	    buf.clear();
+	    current_total_buffer_size = 0;
+	}
+    }
+    if current_total_buffer_size > 0 {
+        for seq in &buf {
+            for kmer in seq.windows(k){
+                match LongKmer::<B>::from_ascii(kmer) {
+                    Ok(kmer) => {
+                        let bin_id = kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize; // Interpret nucleotides in base-4
+                        bin_buffers[bin_id].push(kmer);
+                        if bin_buffers[bin_id].len() == encoder_bin_buf_size.try_into().unwrap(){
+                            if dedup_batches{
+                                bin_buffers[bin_id].sort_unstable();
+                                bin_buffers[bin_id].dedup();
+                            }
                         }
                     }
-                }
-
-                // Send remaining buffers
-                for mut b in bin_buffers{
-                    if dedup_batches{
-                        b.sort_unstable();
-                        b.dedup();
-                    }
-                    sender_clone.send(b).unwrap();
-                }
-            }));
-        }
-
-        // Create writers
-        let mut bin_writers = 
-            Vec::<std::io::BufWriter::<TempFile>>::new();
-
-        for binmer in colex_sorted_binmers(bin_prefix_len) {
-            let name_prefix = format!("sbwt-temp-{}-", String::from_utf8(binmer).unwrap());
-            let f = temp_file_manager.create_new_file(&name_prefix, 8, ".bin");
-            bin_writers.push(BufWriter::new(f));
-        }
-
-
-        let writer_handle = thread::spawn( move || {
-            while let Ok(batch) = writer_in.recv(){
-                if !batch.is_empty() {
-                    let bin_id = batch[0].get_from_left(0) as usize * 16 + batch[0].get_from_left(1) as usize * 4 + batch[0].get_from_left(2) as usize; // Intepret nucleotides in base-4
-                    let bin_file = &mut bin_writers[bin_id];
-                    for kmer in batch{
-                        kmer.serialize(bin_file).unwrap(); // Todo: write all at once
-                    }
+                    Err(KmerEncodingError::InvalidNucleotide(_)) => (), // Ignore
+                    Err(KmerEncodingError::TooLong(_)) => panic!("k = {} is too long", k),
                 }
             }
-            bin_writers
-        });
-
-        producer_handle.join().unwrap();
-        drop(encoder_in); // Close the channel
-        for h in encoder_handles{
-            h.join().unwrap();
         }
-        drop(encoder_out); // Close the channel
+	buf.clear();
+    }
 
-        // Return the TempFiles
-        let writers = writer_handle.join().unwrap();
-        let mut writers: Vec<TempFile> = writers.into_iter().map(|w| w.into_inner().unwrap()).collect();
-        for w in writers.iter_mut(){
-            w.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    // Send remaining buffers
+    if dedup_batches {
+        for b in &mut bin_buffers{
+            b.sort_unstable();
+            b.dedup();
         }
-        writers
+    }
 
-    })
+    // Create writers
+    let mut bin_writers = Vec::<std::io::BufWriter::<TempFile>>::new();
+
+    for binmer in colex_sorted_binmers(bin_prefix_len) {
+        let name_prefix = format!("sbwt-temp-{}-", String::from_utf8(binmer).unwrap());
+        let f = temp_file_manager.create_new_file(&name_prefix, 8, ".bin");
+        bin_writers.push(BufWriter::new(f));
+    }
+
+
+    bin_buffers.iter().for_each(|batch| {
+        if !batch.is_empty() {
+            let bin_id = batch[0].get_from_left(0) as usize * 16 + batch[0].get_from_left(1) as usize * 4 + batch[0].get_from_left(2) as usize; // Intepret nucleotides in base-4
+            let bin_file = &mut bin_writers[bin_id];
+            for kmer in batch{
+                kmer.serialize(bin_file).unwrap(); // Todo: write all at once
+            }
+        }
+    });
+
+    // Return the TempFiles
+    let mut writers: Vec<TempFile> = bin_writers.into_iter().map(|w| w.into_inner().unwrap()).collect();
+    for w in writers.iter_mut(){
+        w.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    }
+    writers
+
 }
 
 // Overwrite the files with sorted and deduplicates files. Returns back the files after overwriting.
-pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: Vec<TempFile>, mem_gb: usize, n_threads: usize) -> Vec<TempFile> {
+pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: &mut Vec<TempFile>, mem_gb: usize, n_threads: usize) {
 
     let filesizes = bin_files.iter().map(|f| f.avail_in() as usize).collect::<Vec<usize>>();
-    let mut files_and_sizes = bin_files.into_iter().enumerate().map(|(i, f)| (f, filesizes[i], i)).collect::<Vec<(TempFile, usize, usize)>>();
+    let mut files_and_sizes = bin_files.into_iter().enumerate().map(|(i, f)| (f, filesizes[i], i)).collect::<Vec<(&mut TempFile, usize, usize)>>();
         
     files_and_sizes.sort_by_key(|(_, size, _)| *size);
 
@@ -165,83 +143,20 @@ pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: Vec<TempFile>, me
 
     log::info!("Sorting k-mer bins");
 
-    use crossbeam::unbounded;
-
-    // A work queue
-    let (queue_sender, queue_recvr) = unbounded::<(TempFile, usize, usize)>(); // File, size, index
-
-    // A queue to notify the producer that a bin has been processed.
-    // The usize in the channel is the size of the bin that was processed.
-    let (producer_notify, producer_recv_notify) = unbounded::<usize>();
-
-    // Wrap in mutex to share between threads
-    let mut total_size_in_processing = 0_usize;
-
-    // Start the producer
-    let producer_handle = thread::spawn(move || {
-        while !files_and_sizes.is_empty() {
-            // Push as much work to the queue as possible
-            while !files_and_sizes.is_empty(){    
-                let s = files_and_sizes.last().unwrap().1; // Size
-                if total_size_in_processing == 0 || total_size_in_processing + s <= max_mem {
-                    let (f,s,i) = files_and_sizes.pop().unwrap();
-                    queue_sender.send((f, s, i)).unwrap();
-                    total_size_in_processing += s;
-                } else {
-                    break;
-                }
-            }
-
-            let s_done = producer_recv_notify.recv().unwrap(); // Wait for a notification
-            total_size_in_processing -= s_done;
-        }
-
-        // All files have been pushed to the channel
-        drop(queue_sender); // Close the channel
-    });
-
-    let mut consumer_handles = Vec::<thread::JoinHandle<Vec::<(TempFile, usize)>>>::new();
-
-    // Spawn consumers
-    for _ in 0..n_threads{
-        let recv_clone = queue_recvr.clone();
-        let producer_notify = producer_notify.clone();
-
-        consumer_handles.push(std::thread::spawn( move || {
-            let mut processed_files = Vec::<(TempFile, usize)>::new(); // File, index
-            while let Ok((mut f, s, i)) = recv_clone.recv(){
-                // Using debug log level as a more verbose info level
-                let mut reader = std::io::BufReader::new(&mut f);
-                let chunk = KmerChunk::<B>::load(&mut reader).unwrap();
+    files_and_sizes.iter_mut().for_each(|(f, _s, _i)| {
+        // Using debug log level as a more verbose info level
+        let mut reader = std::io::BufReader::new(f.file.borrow_mut());
+        let chunk = KmerChunk::<B>::load(&mut reader).unwrap();
         
-                let mut chunk = chunk.sort();
-                chunk.dedup();
+        let mut chunk = chunk.sort();
+        chunk.dedup();
 
-                // Overwrite the file and seek to start
-		f.file = std::io::Cursor::new(Vec::new());
-                let chunk_out = std::io::BufWriter::new(&mut f);
-                chunk.serialize(chunk_out).unwrap();
-                f.file.seek(std::io::SeekFrom::Start(0)).unwrap();
-
-                // Notify the producer that s bytes have been processed and
-                // new work can possibly be pushed to the queue.
-                let _ = producer_notify.send(s); // This may fail if the producer has already exited. That is ok.
-
-                processed_files.push((f,i));
-            }
-            processed_files // Return to owner
-        }));
-    }
-
-    let mut processed_files = Vec::<(TempFile, usize)>::new();
-    producer_handle.join().unwrap();
-    for h in consumer_handles{
-        processed_files.extend(h.join().unwrap());
-    }
-    processed_files.sort_by(|(_, i1), (_, i2)| i1.cmp(i2));
-
-    processed_files.into_iter().map(|(f,_)| f).collect() // Return to owner
-
+        // Overwrite the file and seek to start
+	f.file = std::io::Cursor::new(Vec::new());
+        let chunk_out = std::io::BufWriter::new(f.file.borrow_mut());
+        chunk.serialize(chunk_out).unwrap();
+        f.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    });
 }
 
 // The original files are deleted
