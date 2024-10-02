@@ -33,8 +33,7 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
     // Wrap to scope to be able to borrow seqs for the producer thread even when it's not 'static.
     let bin_prefix_len = 3_usize; // If you update this you must update all the logic below
     let n_bins = (4_usize).pow(bin_prefix_len as u32); // 64
-    let producer_buf_size = 1_000_usize; // TODO: respect this
-    let mem_gb = (1 as usize * (1_usize << 30) as usize) / 8;
+    let mem_gb = (mem_gb as usize * (1_usize << 30) as usize);
     let encoder_bin_buf_size = mem_gb / ((n_bins as usize * LongKmer::<B>::byte_size() as usize) * n_threads as usize);
 
     log::info!("Splitting k-mers into {} bins", n_bins);
@@ -43,56 +42,24 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
         buf.reserve_exact(encoder_bin_buf_size.try_into().unwrap());
     }
 
-    let mut current_total_buffer_size = 0_usize;
     let mut buf = Vec::<Box<[u8]>>::new();
     while let Some(seq) = seqs.stream_next() {
-        current_total_buffer_size += seq.len();
 	let mut seq_copy = seq.to_owned();
         seq_copy.reverse(); // Reverse to get colex sorting
-        buf.push(seq_copy.into_boxed_slice());
-        if current_total_buffer_size > producer_buf_size {
-            for seq in &buf {
-                for kmer in seq.windows(k){
-                    match LongKmer::<B>::from_ascii(kmer) {
-                        Ok(kmer) => {
-                            let bin_id = kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize; // Interpret nucleotides in base-4
-                            bin_buffers[bin_id].push(kmer);
-                            if bin_buffers[bin_id].len() == encoder_bin_buf_size.try_into().unwrap(){
-                                if dedup_batches{
-                                    bin_buffers[bin_id].sort_unstable();
-                                    bin_buffers[bin_id].dedup();
-                                }
-                            }
-                        }
-                        Err(KmerEncodingError::InvalidNucleotide(_)) => (), // Ignore
-                        Err(KmerEncodingError::TooLong(_)) => panic!("k = {} is too long", k),
-                    }
-                }
-            }
-	    buf.clear();
-	    current_total_buffer_size = 0;
-	}
+	buf.push(seq_copy.into_boxed_slice());
     }
-    if current_total_buffer_size > 0 {
-        for seq in &buf {
-            for kmer in seq.windows(k){
-                match LongKmer::<B>::from_ascii(kmer) {
-                    Ok(kmer) => {
-                        let bin_id = kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize; // Interpret nucleotides in base-4
-                        bin_buffers[bin_id].push(kmer);
-                        if bin_buffers[bin_id].len() == encoder_bin_buf_size.try_into().unwrap(){
-                            if dedup_batches{
-                                bin_buffers[bin_id].sort_unstable();
-                                bin_buffers[bin_id].dedup();
-                            }
-                        }
-                    }
-                    Err(KmerEncodingError::InvalidNucleotide(_)) => (), // Ignore
-                    Err(KmerEncodingError::TooLong(_)) => panic!("k = {} is too long", k),
-                }
+
+    for seq in &buf {
+	for kmer in seq.windows(k){
+            match LongKmer::<B>::from_ascii(kmer) {
+		Ok(kmer) => {
+                    let bin_id = kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize; // Interpret nucleotides in base-4
+                    bin_buffers[bin_id].push(kmer);
+		}
+		Err(KmerEncodingError::InvalidNucleotide(_)) => (), // Ignore
+		Err(KmerEncodingError::TooLong(_)) => panic!("k = {} is too long", k),
             }
-        }
-	buf.clear();
+	}
     }
 
     // Send remaining buffers
