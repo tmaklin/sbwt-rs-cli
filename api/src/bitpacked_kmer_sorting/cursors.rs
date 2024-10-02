@@ -1,10 +1,11 @@
-use std::{io::{BufReader, Seek, Read}, fs::File, path::Path};
+use std::{io::{BufReader, Seek, Read}, fs::File};
 
 use simple_sds_sbwt::{ops::Access, raw_vector::AccessRaw};
 use std::io::SeekFrom;
 use std::cmp::min;
 use super::kmer::LongKmer;
 use crate::util::binary_search_leftmost_that_fulfills_pred;
+use crate::tempfile::TempFile;
 
 pub struct DummyNodeMerger<R: std::io::Read, const B: usize> {
     dummy_reader: R, // Stream of k-mer objects
@@ -110,7 +111,40 @@ impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
     }
 }
 
-impl<const B: usize> Iterator for DummyNodeMerger<BufReader<File>, B> {
+impl<const B: usize> Iterator for DummyNodeMerger<BufReader<&mut TempFile>, B> {
+    type Item = (LongKmer<B>, u8);
+
+    // Produces pairs (kmer, length)
+    fn next(&mut self) -> Option<(LongKmer::<B>, u8)> {
+        match (self.dummy_kmer, self.nondummy_kmer){
+            (None, None) => None,
+            (Some(dummy_kmer), None) => {
+                self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
+                self.dummy_position += 1;
+                Some(dummy_kmer)
+            },
+            (None, Some(nondummy_kmer)) => {
+                self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
+                self.nondummy_position += 1;
+                Some(nondummy_kmer)
+            },
+            (Some(dummy_kmer), Some(nondummy_kmer)) => {
+                if dummy_kmer < nondummy_kmer {
+                    self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
+                    self.dummy_position += 1;
+                    Some(dummy_kmer)
+                } else {
+                    self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
+                    self.nondummy_position += 1;
+                    Some(nondummy_kmer)
+                }
+            }
+        }
+    }
+
+}
+
+impl<const B: usize> Iterator for DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B> {
     type Item = (LongKmer<B>, u8);
 
     // Produces pairs (kmer, length)
@@ -144,27 +178,27 @@ impl<const B: usize> Iterator for DummyNodeMerger<BufReader<File>, B> {
 }
 
 // We take in Paths instead of a Files because we need multiple readers to the same files 
-pub fn init_char_cursors<const B: usize>(dummy_filepath: &Path, nondummy_filepath: &Path, k: usize, sigma: usize)
--> Vec<DummyNodeMerger<BufReader<File>, B>>{
-    let mut char_cursors = Vec::<DummyNodeMerger<BufReader<File>, B>>::new();
+pub fn init_char_cursors<const B: usize>(dummy_file: &TempFile, nondummy_file: &TempFile, k: usize, sigma: usize)
+-> Vec<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>{
+    let mut char_cursors = Vec::<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>::new();
     for c in 0..(sigma as u8){
         log::trace!("Searching character {}", c);
 
         let (dummy_reader, dummy_pos) = 
         { // Seek in dummies
 
-            let dummy_file_len = std::fs::metadata(dummy_filepath).unwrap().len() as usize;
+            let dummy_file_len = dummy_file.avail_in() as usize;
             let dummy_record_len = LongKmer::<B>::byte_size() + 1; // Pairs (kmer, len byte)
             assert_eq!(dummy_file_len % dummy_record_len, 0);
     
             let access_fn = |pos| {
-                let mut f = File::open(dummy_filepath).unwrap();
-                f.seek(SeekFrom::Start(pos as u64 * dummy_record_len as u64)).unwrap();
-                let kmer = LongKmer::<B>::load(&mut f).unwrap().unwrap(); // Should never be none because we know the file length
+		let mut cursor = dummy_file.file.clone();
+                cursor.seek(SeekFrom::Start(pos as u64 * dummy_record_len as u64)).unwrap();
+                let kmer = LongKmer::<B>::load(&mut cursor).unwrap().unwrap(); // Should never be none because we know the file length
 
                 // Read the length byte
                 let mut len_buf = [0_u8; 1];
-                f.read_exact(&mut len_buf).unwrap();
+                cursor.read_exact(&mut len_buf).unwrap();
                 let len = u8::from_le_bytes(len_buf);
                 (kmer, len)
             };
@@ -178,22 +212,22 @@ pub fn init_char_cursors<const B: usize>(dummy_filepath: &Path, nondummy_filepat
                 pred_fn, 
                 dummy_file_len / dummy_record_len);
 
-            let mut f = File::open(dummy_filepath).unwrap();
-            f.seek(SeekFrom::Start(start as u64 * dummy_record_len as u64)).unwrap();
-            (BufReader::new(f), start)
+	    let mut cursor = dummy_file.file.clone();
+            cursor.seek(SeekFrom::Start(start as u64 * dummy_record_len as u64)).unwrap();
+            (BufReader::new(cursor), start)
         };
 
         let (nondummy_reader, nondummy_pos) = 
         { // Seek in nondummies
 
-            let nondummy_file_len = std::fs::metadata(nondummy_filepath).unwrap().len() as usize;
+            let nondummy_file_len = nondummy_file.avail_in() as usize;
             let nondummy_record_len = LongKmer::<B>::byte_size();
             assert_eq!(nondummy_file_len % nondummy_record_len, 0);
     
             let access_fn = |pos| {
-                let mut f = File::open(nondummy_filepath).unwrap();
-                f.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
-                LongKmer::<B>::load(&mut f).unwrap().unwrap() // Should never be None because we know the file length
+		let mut cursor = nondummy_file.file.clone();
+		cursor.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
+                LongKmer::<B>::load(&mut cursor).unwrap().unwrap() // Should never be None because we know the file length
             };
 
             let pred_fn = |kmer: LongKmer::<B>| {
@@ -204,10 +238,10 @@ pub fn init_char_cursors<const B: usize>(dummy_filepath: &Path, nondummy_filepat
                 access_fn, 
                 pred_fn, 
                 nondummy_file_len / nondummy_record_len);
-        
-            let mut f = File::open(nondummy_filepath).unwrap();
-            f.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
-            (BufReader::new(f), start)
+
+            let mut cursor = nondummy_file.file.clone();
+            cursor.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
+	    (BufReader::new(cursor), start)
         };
 
         let cursor = DummyNodeMerger::new_with_initial_positions(dummy_reader, nondummy_reader, k, dummy_pos, nondummy_pos);
@@ -220,8 +254,8 @@ pub fn init_char_cursors<const B: usize>(dummy_filepath: &Path, nondummy_filepat
 
 // Returns the SBWT bit vectors and optionally the LCS array
 pub fn build_sbwt_bit_vectors<const B: usize>(
-    global_cursor: DummyNodeMerger<BufReader<File>, B>, 
-    mut char_cursors: Vec<DummyNodeMerger<BufReader<File>, B>>, 
+    global_cursor: DummyNodeMerger<BufReader<&mut TempFile>, B>,
+    mut char_cursors: Vec<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>,
     n: usize,
     k: usize, 
     sigma: usize,
@@ -311,8 +345,6 @@ mod tests{
 
         let mut nondummy_file = temp_file_manager.create_new_file("test-", 10, ".nondummy");
         let mut dummy_file = temp_file_manager.create_new_file("test-", 10, ".dummy");
-        let nondummy_path = nondummy_file.path.clone();
-        let dummy_path = dummy_file.path.clone();
 
         for kmer in nondummies.iter(){
             kmer.serialize(&mut nondummy_file).unwrap();
@@ -327,7 +359,7 @@ mod tests{
         dummy_file.flush().unwrap();
         nondummy_file.flush().unwrap();
 
-        let char_cursors = init_char_cursors(&dummy_path, &nondummy_path, 4, 4);
+        let char_cursors = init_char_cursors(&mut dummy_file, &mut nondummy_file, 4, 4);
 
         assert_eq!(char_cursors[0].peek(), Some((LongKmer::<2>::from_ascii(b"AAAA").unwrap(), 1))); // A
         assert_eq!(char_cursors[1].peek(), Some((LongKmer::<2>::from_ascii(b"GGAA").unwrap(), 4))); // C

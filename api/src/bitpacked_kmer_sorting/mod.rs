@@ -29,11 +29,11 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
         kmer_splitter::concat_files(bin_files, &mut kmers_file.file);
         kmers_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
-        let n_kmers = std::fs::metadata(&kmers_file.path).unwrap().len() as usize / kmer::LongKmer::<B>::byte_size();
+        let n_kmers = kmers_file.avail_in() / kmer::LongKmer::<B>::byte_size();
 
         log::info!("{} distinct k-mers found", n_kmers);
 
-        let required_dummies = dummies::get_sorted_dummies::<B>(&kmers_file.path, sigma, k, temp_file_manager);
+        let required_dummies = dummies::get_sorted_dummies::<B>(&kmers_file, sigma, k, temp_file_manager);
 
         log::info!("{} dummy nodes needed", required_dummies.len());
 
@@ -41,15 +41,18 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
 
         // Write dummies to disk
         let mut dummy_file = temp_file_manager.create_new_file("dummies-", 10, ".bin");
-        dummies::write_to_disk(required_dummies, &mut dummy_file.file);
+        dummies::write_to_disk(required_dummies, &mut dummy_file);
         
         log::info!("Constructing the sbwt subset sequence");
 
-        let char_cursors = cursors::init_char_cursors::<B>(&dummy_file.path, &kmers_file.path, k, sigma);
+        let char_cursors = cursors::init_char_cursors::<B>(&dummy_file, &kmers_file, k, sigma);
+
+	dummy_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+	kmers_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
         let global_cursor = cursors::DummyNodeMerger::new(
-            std::io::BufReader::new(std::fs::File::open(&dummy_file.path).unwrap()),
-            std::io::BufReader::new(std::fs::File::open(&kmers_file.path).unwrap()),
+            std::io::BufReader::new(&mut dummy_file),
+            std::io::BufReader::new(&mut kmers_file),
             k,
         );
 

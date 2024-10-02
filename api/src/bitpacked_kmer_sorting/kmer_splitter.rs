@@ -156,7 +156,7 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
 // Overwrite the files with sorted and deduplicates files. Returns back the files after overwriting.
 pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: Vec<TempFile>, mem_gb: usize, n_threads: usize) -> Vec<TempFile> {
 
-    let filesizes = bin_files.iter().map(|f| f.path.metadata().unwrap().len() as usize).collect::<Vec<usize>>();
+    let filesizes = bin_files.iter().map(|f| f.avail_in() as usize).collect::<Vec<usize>>();
     let mut files_and_sizes = bin_files.into_iter().enumerate().map(|(i, f)| (f, filesizes[i], i)).collect::<Vec<(TempFile, usize, usize)>>();
         
     files_and_sizes.sort_by_key(|(_, size, _)| *size);
@@ -211,19 +211,16 @@ pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: Vec<TempFile>, me
             let mut processed_files = Vec::<(TempFile, usize)>::new(); // File, index
             while let Ok((mut f, s, i)) = recv_clone.recv(){
                 // Using debug log level as a more verbose info level
-                log::debug!("Sorting bin {} of size {}", f.path.display(), s);
-                let mut reader = std::io::BufReader::new(&f.file);
+                let mut reader = std::io::BufReader::new(&mut f);
                 let chunk = KmerChunk::<B>::load(&mut reader).unwrap();
         
                 let mut chunk = chunk.sort();
                 chunk.dedup();
 
                 // Overwrite the file and seek to start
-                f.file.set_len(0).unwrap();
-                f.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+		f.file = std::io::Cursor::new(Vec::new());
                 let chunk_out = std::io::BufWriter::new(&mut f);
                 chunk.serialize(chunk_out).unwrap();
-                f.flush().unwrap();
                 f.file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
                 // Notify the producer that s bytes have been processed and

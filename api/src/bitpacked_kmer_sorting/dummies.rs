@@ -2,6 +2,7 @@ use std::io::{BufWriter, Write};
 
 use super::kmer::LongKmer;
 use crate::tempfile::TempFileManager;
+use crate::tempfile::TempFile;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
@@ -14,23 +15,23 @@ impl std::io::Read for NullReader{
 }
 
 // We take in a path and not a file object because we need multiple readers to the same file
-pub fn get_sorted_dummies<const B: usize>(sorted_kmers_filepath: &std::path::Path, sigma: usize, k: usize, temp_file_manager: &mut TempFileManager) -> Vec<(LongKmer::<B>, u8)>{
+pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &TempFile, sigma: usize, k: usize, temp_file_manager: &mut TempFileManager) -> Vec<(LongKmer::<B>, u8)>{
 
     // Todo: I'm using dummy merger cursors with an empty dummy file. Should refactor things to manage without the
     // empty dummy file.
 
     // Number of k-mers in file
-    let n = std::fs::metadata(sorted_kmers_filepath).unwrap().len() as usize / LongKmer::<B>::byte_size();
+    let n = sorted_kmers.avail_in() as usize / LongKmer::<B>::byte_size();
 
     let mut has_predecessor = simple_sds_sbwt::raw_vector::RawVector::new();
     has_predecessor.resize(n, false);
 
     let emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
-    let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&emptyfile.path, sorted_kmers_filepath, k, sigma);
+    let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&emptyfile, sorted_kmers, k, sigma);
 
     let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        std::io::BufReader::new(std::fs::File::open(&emptyfile.path).unwrap()),
-        std::io::BufReader::new(std::fs::File::open(sorted_kmers_filepath).unwrap()),
+        std::io::BufReader::new(emptyfile.file.clone()),
+        std::io::BufReader::new(sorted_kmers.file.clone()),
         k,
     );
 
@@ -57,8 +58,8 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers_filepath: &std::path::Pat
     }
 
     let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        std::io::BufReader::new(std::fs::File::open(&emptyfile.path).unwrap()),
-        std::io::BufReader::new(std::fs::File::open(sorted_kmers_filepath).unwrap()),
+        std::io::BufReader::new(emptyfile.file.clone()),
+        std::io::BufReader::new(sorted_kmers.file.clone()),
         k,
     ); // New global cursor
 
@@ -89,7 +90,7 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers_filepath: &std::path::Pat
 
 }
 
-pub fn write_to_disk<const B: usize>(dummies: Vec<(LongKmer::<B>, u8)>, writer: &mut std::fs::File){   
+pub fn write_to_disk<const B: usize>(dummies: Vec<(LongKmer::<B>, u8)>, writer: &mut TempFile){
     let mut bw = BufWriter::new(writer);
     for (kmer, len) in dummies.iter(){
         kmer.serialize(&mut bw).unwrap();
