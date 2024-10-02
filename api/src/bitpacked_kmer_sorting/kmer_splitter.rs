@@ -33,8 +33,9 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
     // Wrap to scope to be able to borrow seqs for the producer thread even when it's not 'static.
     let bin_prefix_len = 3_usize; // If you update this you must update all the logic below
     let n_bins = (4_usize).pow(bin_prefix_len as u32); // 64
-    let producer_buf_size = 1_000_000_usize; // TODO: respect this
-   let encoder_bin_buf_size = mem_gb as u64 * (1_usize << 30) as u64 / ((n_bins as u64 * LongKmer::<B>::byte_size() as u64) * n_threads as u64);
+    let producer_buf_size = 1_000_usize; // TODO: respect this
+    let mem_gb = (1 as usize * (1_usize << 30) as usize) / 8;
+    let encoder_bin_buf_size = mem_gb / ((n_bins as usize * LongKmer::<B>::byte_size() as usize) * n_threads as usize);
 
     log::info!("Splitting k-mers into {} bins", n_bins);
     let mut bin_buffers = vec![Vec::<LongKmer::<B>>::new(); n_bins];
