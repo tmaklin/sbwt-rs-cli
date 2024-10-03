@@ -44,7 +44,7 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
         
         log::info!("Constructing the sbwt subset sequence");
 
-        let char_cursors = cursors::init_char_cursors::<B>(&dummy_file, &kmers_file, k, sigma);
+        let char_cursors = cursors::init_char_cursors::<B>(&mut dummy_file, &mut kmers_file, k, sigma);
 
 	dummy_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
 	kmers_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();

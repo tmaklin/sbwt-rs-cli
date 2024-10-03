@@ -29,7 +29,7 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     has_predecessor.resize(n, false);
 
     let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
-    let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&emptyfile, sorted_kmers, k, sigma);
+    let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&mut emptyfile, sorted_kmers, k, sigma);
 
     let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
         std::io::BufReader::new(&mut emptyfile.file),

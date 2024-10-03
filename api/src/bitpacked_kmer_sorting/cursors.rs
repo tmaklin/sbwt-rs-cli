@@ -4,7 +4,7 @@ use simple_sds_sbwt::{ops::Access, raw_vector::AccessRaw};
 use std::io::SeekFrom;
 use std::cmp::min;
 use super::kmer::LongKmer;
-use crate::util::binary_search_leftmost_that_fulfills_pred;
+use crate::util::binary_search_leftmost_that_fulfills_pred_mut;
 use crate::tempfile::TempFile;
 
 pub struct DummyNodeMerger<R: std::io::Read, const B: usize> {
@@ -210,7 +210,7 @@ impl<const B: usize> Iterator for DummyNodeMerger<BufReader<&mut std::io::Cursor
 }
 
 // We take in Paths instead of a Files because we need multiple readers to the same files 
-pub fn init_char_cursors<const B: usize>(dummy_file: &TempFile, nondummy_file: &TempFile, k: usize, sigma: usize)
+pub fn init_char_cursors<const B: usize>(dummy_file: &mut TempFile, nondummy_file: &mut TempFile, k: usize, sigma: usize)
 -> Vec<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>{
     let mut char_cursors = Vec::<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>::new();
     for c in 0..(sigma as u8){
@@ -224,13 +224,12 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &TempFile, nondummy_file: &
             assert_eq!(dummy_file_len % dummy_record_len, 0);
     
             let access_fn = |pos| {
-		let mut cursor = dummy_file.file.clone();
-                cursor.seek(SeekFrom::Start(pos as u64 * dummy_record_len as u64)).unwrap();
-                let kmer = LongKmer::<B>::load(&mut cursor).unwrap().unwrap(); // Should never be none because we know the file length
+                dummy_file.file.seek(SeekFrom::Start(pos as u64 * dummy_record_len as u64)).unwrap();
+                let kmer = LongKmer::<B>::load(&mut dummy_file.file).unwrap().unwrap(); // Should never be none because we know the file length
 
                 // Read the length byte
                 let mut len_buf = [0_u8; 1];
-                cursor.read_exact(&mut len_buf).unwrap();
+                dummy_file.file.read_exact(&mut len_buf).unwrap();
                 let len = u8::from_le_bytes(len_buf);
                 (kmer, len)
             };
@@ -239,14 +238,13 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &TempFile, nondummy_file: &
                 kmer.1 > 0 && kmer.0.get_from_left(0) >= c
             };
 
-            let start = binary_search_leftmost_that_fulfills_pred(
+            let start = binary_search_leftmost_that_fulfills_pred_mut(
                 access_fn, 
                 pred_fn, 
                 dummy_file_len / dummy_record_len);
 
-	    let mut cursor = dummy_file.file.clone();
-            cursor.seek(SeekFrom::Start(start as u64 * dummy_record_len as u64)).unwrap();
-            (BufReader::new(cursor), start)
+            dummy_file.file.seek(SeekFrom::Start(start as u64 * dummy_record_len as u64)).unwrap();
+            (BufReader::new(dummy_file.file.clone()), start)
         };
 
         let (nondummy_reader, nondummy_pos) = 
@@ -257,20 +255,20 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &TempFile, nondummy_file: &
             assert_eq!(nondummy_file_len % nondummy_record_len, 0);
     
             let access_fn = |pos| {
-		let mut cursor = nondummy_file.file.clone();
-		cursor.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
-                LongKmer::<B>::load(&mut cursor).unwrap().unwrap() // Should never be None because we know the file length
+		nondummy_file.file.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
+                LongKmer::<B>::load(&mut nondummy_file.file).unwrap().unwrap() // Should never be None because we know the file length
             };
 
             let pred_fn = |kmer: LongKmer::<B>| {
                 kmer.get_from_left(0) >= c
             };
 
-            let start = binary_search_leftmost_that_fulfills_pred(
+            let start = binary_search_leftmost_that_fulfills_pred_mut(
                 access_fn, 
                 pred_fn, 
                 nondummy_file_len / nondummy_record_len);
 
+	    nondummy_file.file.seek(SeekFrom::Start(0)).unwrap();
             let mut cursor = nondummy_file.file.clone();
             cursor.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
 	    (BufReader::new(cursor), start)
