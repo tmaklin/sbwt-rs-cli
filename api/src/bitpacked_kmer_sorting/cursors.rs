@@ -177,6 +177,38 @@ impl<const B: usize> Iterator for DummyNodeMerger<BufReader<std::io::Cursor<Vec<
 
 }
 
+impl<const B: usize> Iterator for DummyNodeMerger<BufReader<&mut std::io::Cursor<Vec<u8>>>, B> {
+    type Item = (LongKmer<B>, u8);
+
+    // Produces pairs (kmer, length)
+    fn next(&mut self) -> Option<(LongKmer::<B>, u8)> {
+        match (self.dummy_kmer, self.nondummy_kmer){
+            (None, None) => None,
+            (Some(dummy_kmer), None) => {
+                self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
+                self.dummy_position += 1;
+                Some(dummy_kmer)
+            },
+            (None, Some(nondummy_kmer)) => {
+                self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
+                self.nondummy_position += 1;
+                Some(nondummy_kmer)
+            },
+            (Some(dummy_kmer), Some(nondummy_kmer)) => {
+                if dummy_kmer < nondummy_kmer {
+                    self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
+                    self.dummy_position += 1;
+                    Some(dummy_kmer)
+                } else {
+                    self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
+                    self.nondummy_position += 1;
+                    Some(nondummy_kmer)
+                }
+            }
+        }
+    }
+}
+
 // We take in Paths instead of a Files because we need multiple readers to the same files 
 pub fn init_char_cursors<const B: usize>(dummy_file: &TempFile, nondummy_file: &TempFile, k: usize, sigma: usize)
 -> Vec<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>{

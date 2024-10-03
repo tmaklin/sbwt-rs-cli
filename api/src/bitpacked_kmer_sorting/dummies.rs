@@ -1,4 +1,6 @@
 use std::io::{BufWriter, Write};
+use std::io::Seek;
+use std::io::SeekFrom;
 
 use super::kmer::LongKmer;
 use crate::tempfile::TempFileManager;
@@ -15,7 +17,7 @@ impl std::io::Read for NullReader{
 }
 
 // We take in a path and not a file object because we need multiple readers to the same file
-pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &TempFile, sigma: usize, k: usize, temp_file_manager: &mut TempFileManager) -> Vec<(LongKmer::<B>, u8)>{
+pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: usize, k: usize, temp_file_manager: &mut TempFileManager) -> Vec<(LongKmer::<B>, u8)>{
 
     // Todo: I'm using dummy merger cursors with an empty dummy file. Should refactor things to manage without the
     // empty dummy file.
@@ -26,12 +28,12 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &TempFile, sigma: usize,
     let mut has_predecessor = simple_sds_sbwt::raw_vector::RawVector::new();
     has_predecessor.resize(n, false);
 
-    let emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
+    let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
     let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&emptyfile, sorted_kmers, k, sigma);
 
     let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        std::io::BufReader::new(emptyfile.file.clone()),
-        std::io::BufReader::new(sorted_kmers.file.clone()),
+        std::io::BufReader::new(&mut emptyfile.file),
+        std::io::BufReader::new(&mut sorted_kmers.file),
         k,
     );
 
@@ -57,9 +59,13 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &TempFile, sigma: usize,
         }
     }
 
+    // Rewind cursors
+    emptyfile.file.seek(SeekFrom::Start(0)).unwrap();
+    sorted_kmers.file.seek(SeekFrom::Start(0)).unwrap();
+
     let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        std::io::BufReader::new(emptyfile.file.clone()),
-        std::io::BufReader::new(sorted_kmers.file.clone()),
+        std::io::BufReader::new(&mut emptyfile.file),
+        std::io::BufReader::new(&mut sorted_kmers.file),
         k,
     ); // New global cursor
 
