@@ -23,6 +23,20 @@ pub(crate) fn binary_search_leftmost_that_fulfills_pred<T, Access: Fn(usize) -> 
     ans
 }
 
+// Searcher the range [0..n)
+// Return the index of the answer, or n if does not exist
+pub(crate) fn binary_search_leftmost_that_fulfills_pred_mut<T, Access: FnMut(usize) -> T, Pred: FnMut(T) -> bool>(mut access: Access, mut pred: Pred, n: usize) -> usize {
+    let mut ans = n;
+    let mut step = n;
+    while step > 0 {
+        while ans as isize - step as isize >= 0 && pred(access(ans-step)) {
+            ans -= step;
+        }
+        step /= 2;
+    }
+    ans
+}
+
 pub const DNA_ALPHABET: [u8; 4] = [b'A', b'C', b'G', b'T'];
 
 // This bit vector of length 256 marks the ascii values of these characters: acgtACGT
