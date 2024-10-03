@@ -32,8 +32,8 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&mut emptyfile, sorted_kmers, k, sigma);
 
     let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        std::io::BufReader::new(&mut emptyfile.file),
-        std::io::BufReader::new(&mut sorted_kmers.file),
+        &mut emptyfile,
+        sorted_kmers,
         k,
     );
 
@@ -64,8 +64,8 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     sorted_kmers.file.seek(SeekFrom::Start(0)).unwrap();
 
     let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        std::io::BufReader::new(&mut emptyfile.file),
-        std::io::BufReader::new(&mut sorted_kmers.file),
+        &mut emptyfile,
+        sorted_kmers,
         k,
     ); // New global cursor
 

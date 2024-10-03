@@ -50,8 +50,8 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
 	kmers_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
         let global_cursor = cursors::DummyNodeMerger::new(
-            std::io::BufReader::new(&mut dummy_file),
-            std::io::BufReader::new(&mut kmers_file),
+            &mut dummy_file,
+            &mut kmers_file,
             k,
         );
 

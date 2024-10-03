@@ -111,7 +111,7 @@ impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
     }
 }
 
-impl<const B: usize> Iterator for DummyNodeMerger<BufReader<&mut TempFile>, B> {
+impl<const B: usize> Iterator for DummyNodeMerger<&mut TempFile, B> {
     type Item = (LongKmer<B>, u8);
 
     // Produces pairs (kmer, length)
@@ -144,7 +144,8 @@ impl<const B: usize> Iterator for DummyNodeMerger<BufReader<&mut TempFile>, B> {
 
 }
 
-impl<const B: usize> Iterator for DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B> {
+
+impl<const B: usize> Iterator for DummyNodeMerger<std::io::Cursor<Vec<u8>>, B> {
     type Item = (LongKmer<B>, u8);
 
     // Produces pairs (kmer, length)
@@ -177,7 +178,7 @@ impl<const B: usize> Iterator for DummyNodeMerger<BufReader<std::io::Cursor<Vec<
 
 }
 
-impl<const B: usize> Iterator for DummyNodeMerger<BufReader<&mut std::io::Cursor<Vec<u8>>>, B> {
+impl<const B: usize> Iterator for DummyNodeMerger<&mut std::io::Cursor<Vec<u8>>, B> {
     type Item = (LongKmer<B>, u8);
 
     // Produces pairs (kmer, length)
@@ -211,8 +212,8 @@ impl<const B: usize> Iterator for DummyNodeMerger<BufReader<&mut std::io::Cursor
 
 // We take in Paths instead of a Files because we need multiple readers to the same files 
 pub fn init_char_cursors<const B: usize>(dummy_file: &mut TempFile, nondummy_file: &mut TempFile, k: usize, sigma: usize)
--> Vec<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>{
-    let mut char_cursors = Vec::<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>::new();
+-> Vec<DummyNodeMerger<std::io::Cursor<Vec<u8>>, B>>{
+    let mut char_cursors = Vec::<DummyNodeMerger<std::io::Cursor<Vec<u8>>, B>>::new();
     for c in 0..(sigma as u8){
         log::trace!("Searching character {}", c);
 
@@ -244,7 +245,7 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &mut TempFile, nondummy_fil
                 dummy_file_len / dummy_record_len);
 
             dummy_file.file.seek(SeekFrom::Start(start as u64 * dummy_record_len as u64)).unwrap();
-            (BufReader::new(dummy_file.file.clone()), start)
+            (dummy_file.file.clone(), start)
         };
 
         let (nondummy_reader, nondummy_pos) = 
@@ -269,7 +270,7 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &mut TempFile, nondummy_fil
                 nondummy_file_len / nondummy_record_len);
 
             nondummy_file.file.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
-	    (BufReader::new(nondummy_file.file.clone()), start)
+	    (nondummy_file.file.clone(), start)
         };
 
         let cursor = DummyNodeMerger::new_with_initial_positions(dummy_reader, nondummy_reader, k, dummy_pos, nondummy_pos);
@@ -283,8 +284,8 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &mut TempFile, nondummy_fil
 
 // Returns the SBWT bit vectors and optionally the LCS array
 pub fn build_sbwt_bit_vectors<const B: usize>(
-    global_cursor: DummyNodeMerger<BufReader<&mut TempFile>, B>,
-    mut char_cursors: Vec<DummyNodeMerger<BufReader<std::io::Cursor<Vec<u8>>>, B>>,
+    global_cursor: DummyNodeMerger<&mut TempFile, B>,
+    mut char_cursors: Vec<DummyNodeMerger<std::io::Cursor<Vec<u8>>, B>>,
     n: usize,
     k: usize, 
     sigma: usize,
