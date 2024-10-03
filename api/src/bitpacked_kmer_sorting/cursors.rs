@@ -268,16 +268,15 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &mut TempFile, nondummy_fil
                 pred_fn, 
                 nondummy_file_len / nondummy_record_len);
 
-	    nondummy_file.file.seek(SeekFrom::Start(0)).unwrap();
-            let mut cursor = nondummy_file.file.clone();
-            cursor.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
-	    (BufReader::new(cursor), start)
+            nondummy_file.file.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
+	    (BufReader::new(nondummy_file.file.clone()), start)
         };
 
         let cursor = DummyNodeMerger::new_with_initial_positions(dummy_reader, nondummy_reader, k, dummy_pos, nondummy_pos);
         char_cursors.push(cursor);
     }
 
+    nondummy_file.file.seek(SeekFrom::Start(0)).unwrap();
     char_cursors
 
 }
