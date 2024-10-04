@@ -1,3 +1,4 @@
+use std::borrow::BorrowMut;
 use std::io::{BufReader, Seek, Read};
 
 use simple_sds_sbwt::{ops::Access, raw_vector::AccessRaw};
@@ -284,7 +285,7 @@ pub fn init_char_cursors<const B: usize>(dummy_file: &mut TempFile, nondummy_fil
 
 // Returns the SBWT bit vectors and optionally the LCS array
 pub fn build_sbwt_bit_vectors<const B: usize>(
-    global_cursor: DummyNodeMerger<&mut TempFile, B>,
+    mut global_cursor: DummyNodeMerger<&mut TempFile, B>,
     mut char_cursors: Vec<DummyNodeMerger<std::io::Cursor<Vec<u8>>, B>>,
     n: usize,
     k: usize, 
@@ -308,17 +309,31 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
 
     let mut prev_kmer = LongKmer::<B>::from_ascii(b"").unwrap();
     let mut prev_len = 0_usize;
-    for (kmer_idx, (kmer, len)) in global_cursor.enumerate() {
-        // The k-mers enumerated are reversed
 
-        if build_lcs && kmer_idx > 0 {
-            // The longest common suffix is the longest common prefix of reversed k-mers
-            let mut lcs_value = LongKmer::<B>::lcp(&prev_kmer, &kmer);
-            lcs_value = min(lcs_value, min(prev_len, len as usize));
-            lcs.as_mut().unwrap().set(kmer_idx, lcs_value as u64);
-        }
+    if build_lcs {
+        global_cursor.borrow_mut().enumerate().for_each(|(kmer_idx, (kmer, len))| {
+            if kmer_idx > 0 {
+                // The longest common suffix is the longest common prefix of reversed k-mers
+                let mut lcs_value = LongKmer::<B>::lcp(&prev_kmer, &kmer);
+                lcs_value = min(lcs_value, min(prev_len, len as usize));
+                lcs.as_mut().unwrap().set(kmer_idx, lcs_value as u64);
+            }
+            prev_kmer = kmer;
+            prev_len = len as usize;
+        });
+    }
 
-        for c in 0..(sigma as u8) {
+    global_cursor.dummy_reader.file.rewind();
+    global_cursor.nondummy_reader.file.rewind();
+    global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
+    global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
+    global_cursor.dummy_position = 0;
+    global_cursor.nondummy_position = 0;
+
+    for c in 0..(sigma as u8) {
+
+        let kmer_cs: Vec<(LongKmer::<B>, u8)> = global_cursor.borrow_mut().enumerate().map(|(kmer_idx, (kmer, len))| {
+            // The k-mers enumerated are reversed
             let kmer_c = if len as usize == k {
                 (
                     kmer.clone()
@@ -330,18 +345,26 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
             } else {
                 (kmer.clone().right_shift(1).set_from_left(0, c), len + 1) // Dummy
             };
+            kmer_c
+        }).collect();
 
-            while char_cursors[c as usize].peek().is_some() && char_cursors[c as usize].peek().unwrap() < kmer_c {
+        global_cursor.dummy_reader.file.rewind();
+        global_cursor.nondummy_reader.file.rewind();
+        global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
+        global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
+        global_cursor.dummy_position = 0;
+        global_cursor.nondummy_position = 0;
+
+        kmer_cs.iter().enumerate().for_each(|(kmer_idx, kmer_c)| {
+            while char_cursors[c as usize].peek().is_some() && char_cursors[c as usize].peek().unwrap() < *kmer_c {
                 char_cursors[c as usize].next();
             }
 
-            if char_cursors[c as usize].peek().is_some() && char_cursors[c as usize].peek().unwrap() == kmer_c {
+            if char_cursors[c as usize].peek().is_some() && char_cursors[c as usize].peek().unwrap() == *kmer_c {
                 rawrows[c as usize].set_bit(kmer_idx, true);
                 char_cursors[c as usize].next();
             }
-        }
-        prev_kmer = kmer;
-        prev_len = len as usize;
+        });
     }
 
     (rawrows, lcs)
