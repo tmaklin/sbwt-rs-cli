@@ -323,14 +323,14 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
         });
     }
 
-    global_cursor.dummy_reader.file.rewind();
-    global_cursor.nondummy_reader.file.rewind();
-    global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
-    global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
-    global_cursor.dummy_position = 0;
-    global_cursor.nondummy_position = 0;
-
     for c in 0..(sigma as u8) {
+
+        global_cursor.dummy_reader.file.rewind();
+        global_cursor.nondummy_reader.file.rewind();
+        global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
+        global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
+        global_cursor.dummy_position = 0;
+        global_cursor.nondummy_position = 0;
 
         let kmer_cs: Vec<(LongKmer::<B>, u8)> = global_cursor.borrow_mut().enumerate().map(|(kmer_idx, (kmer, len))| {
             // The k-mers enumerated are reversed
@@ -348,21 +348,24 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
             kmer_c
         }).collect();
 
-        global_cursor.dummy_reader.file.rewind();
-        global_cursor.nondummy_reader.file.rewind();
-        global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
-        global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
-        global_cursor.dummy_position = 0;
-        global_cursor.nondummy_position = 0;
+        let dummy_pos = char_cursors[c as usize].dummy_reader.position();
+        let nondummy_pos = char_cursors[c as usize].nondummy_reader.position();
+
+        global_cursor.dummy_reader.file.set_position(dummy_pos);
+        global_cursor.nondummy_reader.file.set_position(nondummy_pos);
+        global_cursor.dummy_kmer = char_cursors[c as usize].dummy_kmer;
+        global_cursor.nondummy_kmer = char_cursors[c as usize].nondummy_kmer;
+        global_cursor.dummy_position = dummy_pos as usize;
+        global_cursor.nondummy_position = nondummy_pos as usize;
 
         kmer_cs.iter().enumerate().for_each(|(kmer_idx, kmer_c)| {
-            while char_cursors[c as usize].peek().is_some() && char_cursors[c as usize].peek().unwrap() < *kmer_c {
-                char_cursors[c as usize].next();
+            while global_cursor.peek().is_some() && global_cursor.peek().unwrap() < *kmer_c {
+                global_cursor.next();
             }
 
-            if char_cursors[c as usize].peek().is_some() && char_cursors[c as usize].peek().unwrap() == *kmer_c {
+            if global_cursor.peek().is_some() && global_cursor.peek().unwrap() == *kmer_c {
                 rawrows[c as usize].set_bit(kmer_idx, true);
-                char_cursors[c as usize].next();
+                global_cursor.next();
             }
         });
     }
