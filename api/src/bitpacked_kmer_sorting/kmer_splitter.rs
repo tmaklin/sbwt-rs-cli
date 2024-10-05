@@ -100,14 +100,12 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
 }
 
 // Overwrite the files with sorted and deduplicates files. Returns back the files after overwriting.
-pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: &mut Vec<TempFile>, mem_gb: usize, n_threads: usize) {
+pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: &mut Vec<TempFile>, _mem_gb: usize, _n_threads: usize) {
 
     let filesizes = bin_files.iter().map(|f| f.avail_in() as usize).collect::<Vec<usize>>();
     let mut files_and_sizes = bin_files.into_iter().enumerate().map(|(i, f)| (f, filesizes[i], i)).collect::<Vec<(&mut TempFile, usize, usize)>>();
         
     files_and_sizes.sort_by_key(|(_, size, _)| *size);
-
-    let max_mem = mem_gb * (1_usize << 30);
 
     log::info!("Sorting k-mer bins");
 
