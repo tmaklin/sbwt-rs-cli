@@ -66,23 +66,6 @@ impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
         }
     }
 
-    // TODO: this is stupid. The given positions are just for bookkeeping that the caller might use. They don't affect the
-    // cursor at all. Need to refactor.
-    pub fn new_with_initial_positions(mut dummy_reader: R, mut nondummy_reader: R, k: usize, dummy_position: usize, nondummy_position: usize) -> Self {
-        let dummy_kmer = Self::read_from_dummy_reader(&mut dummy_reader);
-        let nondummy_kmer = Self::read_from_non_dummy_reader(&mut nondummy_reader, k);
-
-        Self {
-            dummy_reader,
-            nondummy_reader,
-            dummy_kmer,
-            nondummy_kmer,
-            k,
-            dummy_position,
-            nondummy_position,
-        }
-    }
-
     pub fn peek(&self) -> Option<(LongKmer::<B>, u8)>{
         match (self.dummy_kmer, self.nondummy_kmer){
             (None, None) => None,
@@ -102,10 +85,12 @@ impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn dummy_position(&self) -> usize{
         self.dummy_position
     }
 
+    #[allow(dead_code)]
     pub fn nondummy_position(&self)  -> usize{
         self.nondummy_position
     }

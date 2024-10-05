@@ -11,6 +11,7 @@ pub(crate) fn write_bytes<W: std::io::Write>(out: &mut W, bytes: &[u8]) -> std::
 
 // Searcher the range [0..n)
 // Return the index of the answer, or n if does not exist
+#[allow(dead_code)]
 pub(crate) fn binary_search_leftmost_that_fulfills_pred<T, Access: Fn(usize) -> T, Pred: Fn(T) -> bool>(access: Access, pred: Pred, n: usize) -> usize {
     let mut ans = n;
     let mut step = n;
@@ -25,6 +26,7 @@ pub(crate) fn binary_search_leftmost_that_fulfills_pred<T, Access: Fn(usize) -> 
 
 // Searcher the range [0..n)
 // Return the index of the answer, or n if does not exist
+#[allow(dead_code)]
 pub(crate) fn binary_search_leftmost_that_fulfills_pred_mut<T, Access: FnMut(usize) -> T, Pred: FnMut(T) -> bool>(mut access: Access, mut pred: Pred, n: usize) -> usize {
     let mut ans = n;
     let mut step = n;
@@ -81,6 +83,7 @@ pub fn reverse_complement_in_place(seq: &mut [u8]){
     jseqio::reverse_complement_in_place(seq);
 }
 
+#[allow(dead_code)]
 pub(crate) struct FastXReader{
     inner: jseqio::reader::DynamicFastXReader
 }

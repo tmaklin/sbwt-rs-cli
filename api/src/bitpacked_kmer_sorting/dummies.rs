@@ -11,6 +11,7 @@ use rayon::prelude::*;
 
 use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
 
+#[allow(dead_code)]
 struct NullReader{}
 
 impl std::io::Read for NullReader{

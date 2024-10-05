@@ -6,6 +6,7 @@ pub struct Kmer{
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum KmerEncodingError{
     InvalidNucleotide(char), // contains the offending char
     TooLong(usize), // Contains the length of the k-mer which was too long
