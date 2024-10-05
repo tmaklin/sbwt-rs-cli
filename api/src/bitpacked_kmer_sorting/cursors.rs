@@ -9,16 +9,16 @@ use crate::util::binary_search_leftmost_that_fulfills_pred_mut;
 use crate::tempfile::TempFile;
 
 pub struct DummyNodeMerger<R: std::io::Read, const B: usize> {
-    dummy_reader: R, // Stream of k-mer objects
-    nondummy_reader: R, // Stream of pairs (kmer, len)
+    pub dummy_reader: R, // Stream of k-mer objects
+    pub nondummy_reader: R, // Stream of pairs (kmer, len)
 
-    dummy_kmer: Option<(LongKmer::<B>, u8)>,
-    nondummy_kmer: Option<(LongKmer::<B>, u8)>,
+    pub dummy_kmer: Option<(LongKmer::<B>, u8)>,
+    pub nondummy_kmer: Option<(LongKmer::<B>, u8)>,
 
-    k: usize,
+    pub k: usize,
 
-    dummy_position: usize, // Position of the dummy cursor
-    nondummy_position: usize, // Position of the nondummy cursor
+    pub dummy_position: usize, // Position of the dummy cursor
+    pub nondummy_position: usize, // Position of the nondummy cursor
 }
 
 impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
@@ -102,7 +102,6 @@ impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn dummy_position(&self) -> usize{
         self.dummy_position
     }

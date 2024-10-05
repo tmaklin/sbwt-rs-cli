@@ -1,3 +1,4 @@
+use std::borrow::BorrowMut;
 use std::io::{BufWriter, Write};
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -7,6 +8,8 @@ use crate::tempfile::TempFileManager;
 use crate::tempfile::TempFile;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
+
+use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
 
 struct NullReader{}
 
@@ -31,32 +34,53 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
     let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&mut emptyfile, sorted_kmers, k, sigma);
 
-    let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
+    let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
         &mut emptyfile,
         sorted_kmers,
         k,
     );
 
-    for (x, _) in global_cursor{
-        // x is reversed
-        for c in 0..(sigma as u8){
-            // Shiting a reversed k-mer to the right means shifting the original k-mer to the left
+    let xs: Vec<(LongKmer::<B>, u8)> = global_cursor.borrow_mut().map(|x| {
+        x
+    }).collect();
+
+    global_cursor.dummy_reader.file.rewind();
+    global_cursor.nondummy_reader.file.rewind();
+    global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
+    global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
+    global_cursor.dummy_position = 0;
+    global_cursor.nondummy_position = 0;
+
+
+    for c in 0..(sigma as u8) {
+        let dummy_pos = char_cursors[c as usize].dummy_reader.position();
+        let nondummy_pos = char_cursors[c as usize].nondummy_reader.position();
+
+        global_cursor.dummy_reader.file.set_position(dummy_pos);
+        global_cursor.nondummy_reader.file.set_position(nondummy_pos);
+        global_cursor.dummy_kmer = char_cursors[c as usize].dummy_kmer;
+        global_cursor.nondummy_kmer = char_cursors[c as usize].nondummy_kmer;
+        global_cursor.dummy_position = char_cursors[c as usize].dummy_position();
+        global_cursor.nondummy_position = char_cursors[c as usize].nondummy_position();
+
+        xs.iter().for_each(|(x, _)| {
             let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c);
-            while char_cursors[c as usize].peek().is_some(){
-                match char_cursors[c as usize].peek().unwrap().0.cmp(&xc) {
+
+            while global_cursor.peek().is_some(){
+                match global_cursor.peek().unwrap().0.cmp(&xc) {
                     std::cmp::Ordering::Greater => break,
                     std::cmp::Ordering::Equal => {
-                        has_predecessor.set_bit(char_cursors[c as usize].nondummy_position(), true);
-                        char_cursors[c as usize].next(); // Advance
+                        has_predecessor.set_bit(global_cursor.nondummy_position(), true);
+                        global_cursor.next(); // Advance
                         break
                     },
                     std::cmp::Ordering::Less => {
-                        char_cursors[c as usize].next(); // Advance
+                        global_cursor.next(); // Advance
                         // no break
                     }
                 }
             }
-        }
+        });
     }
 
     // Rewind cursors
