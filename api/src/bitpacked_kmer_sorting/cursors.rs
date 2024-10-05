@@ -355,8 +355,8 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
         global_cursor.nondummy_reader.file.set_position(nondummy_pos);
         global_cursor.dummy_kmer = char_cursors[c as usize].dummy_kmer;
         global_cursor.nondummy_kmer = char_cursors[c as usize].nondummy_kmer;
-        global_cursor.dummy_position = dummy_pos as usize;
-        global_cursor.nondummy_position = nondummy_pos as usize;
+        global_cursor.dummy_position = char_cursors[c as usize].dummy_position();
+        global_cursor.nondummy_position = char_cursors[c as usize].nondummy_position();
 
         kmer_cs.iter().enumerate().for_each(|(kmer_idx, kmer_c)| {
             while global_cursor.peek().is_some() && global_cursor.peek().unwrap() < *kmer_c {
