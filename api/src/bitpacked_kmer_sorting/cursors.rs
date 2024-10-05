@@ -9,16 +9,16 @@ use crate::util::binary_search_leftmost_that_fulfills_pred_mut;
 use crate::tempfile::TempFile;
 
 pub struct DummyNodeMerger<R: std::io::Read, const B: usize> {
-    pub dummy_reader: R, // Stream of k-mer objects
-    pub nondummy_reader: R, // Stream of pairs (kmer, len)
+    dummy_reader: R, // Stream of k-mer objects
+    nondummy_reader: R, // Stream of pairs (kmer, len)
 
-    pub dummy_kmer: Option<(LongKmer::<B>, u8)>,
-    pub nondummy_kmer: Option<(LongKmer::<B>, u8)>,
+    dummy_kmer: Option<(LongKmer::<B>, u8)>,
+    nondummy_kmer: Option<(LongKmer::<B>, u8)>,
 
-    pub k: usize,
+    k: usize,
 
-    pub dummy_position: usize, // Position of the dummy cursor
-    pub nondummy_position: usize, // Position of the nondummy cursor
+    dummy_position: usize, // Position of the dummy cursor
+    nondummy_position: usize, // Position of the nondummy cursor
 }
 
 impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
@@ -195,8 +195,45 @@ impl<const B: usize> Iterator for DummyNodeMerger<&mut std::io::Cursor<Vec<u8>>,
     }
 }
 
+
+pub fn rewind_reader<const B: usize>(reader: &mut DummyNodeMerger<&mut TempFile, B>) {
+    match reader.dummy_reader.file.rewind() {
+        Ok(_) => {
+            // ok
+        },
+        Err(e) => panic!("Error while rewinding dummy reader cursor: {}", e),
+    }
+
+    match reader.nondummy_reader.file.rewind() {
+        Ok(_) => {
+            // ok
+        },
+        Err(e) => panic!("Error while rewinding nondummy reader cursor: {}", e),
+    }
+
+    reader.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(reader.dummy_reader);
+    reader.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(reader.nondummy_reader, reader.k);
+    reader.dummy_position = 0;
+    reader.nondummy_position = 0;
+}
+
+pub fn reset_reader_position<const B: usize>(
+    reader: &mut DummyNodeMerger<&mut TempFile, B>,
+    dummy_reader_pos: u64,
+    nondummy_reader_pos: u64,
+    dummy_pos: usize,
+    nondummy_pos: usize
+) {
+        reader.dummy_reader.file.set_position(dummy_reader_pos);
+        reader.nondummy_reader.file.set_position(nondummy_reader_pos);
+        reader.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(reader.dummy_reader);
+        reader.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(reader.nondummy_reader, reader.k);
+        reader.dummy_position = dummy_pos;
+        reader.nondummy_position = nondummy_pos;
+}
+
 // We take in Paths instead of a Files because we need multiple readers to the same files 
-pub fn init_char_cursor_positions<const B: usize>(dummy_file: &mut TempFile, nondummy_file: &mut TempFile, k: usize, sigma: usize)
+pub fn init_char_cursor_positions<const B: usize>(dummy_file: &mut TempFile, nondummy_file: &mut TempFile, _k: usize, sigma: usize)
 -> Vec<((u64, u64), (u64, u64))>{
     let mut char_cursor_positions = Vec::<((u64, u64), (u64, u64))>::new();
     for c in 0..(sigma as u8){
@@ -309,14 +346,9 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
 
     for c in 0..(sigma as u8) {
 
-        global_cursor.dummy_reader.file.rewind();
-        global_cursor.nondummy_reader.file.rewind();
-        global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
-        global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
-        global_cursor.dummy_position = 0;
-        global_cursor.nondummy_position = 0;
+        rewind_reader(&mut global_cursor);
 
-        let kmer_cs: Vec<(LongKmer::<B>, u8)> = global_cursor.borrow_mut().enumerate().map(|(kmer_idx, (kmer, len))| {
+        let kmer_cs: Vec<(LongKmer::<B>, u8)> = global_cursor.borrow_mut().enumerate().map(|(_kmer_idx, (kmer, len))| {
             // The k-mers enumerated are reversed
             let kmer_c = if len as usize == k {
                 (
@@ -332,15 +364,11 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
             kmer_c
         }).collect();
 
-        let dummy_pos = char_cursors[c as usize].0.1;
-        let nondummy_pos = char_cursors[c as usize].1.1;
-
-        global_cursor.dummy_reader.file.set_position(char_cursors[c as usize].0.0);
-        global_cursor.nondummy_reader.file.set_position(char_cursors[c as usize].1.0);
-        global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
-        global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
-        global_cursor.dummy_position = dummy_pos as usize;
-        global_cursor.nondummy_position = nondummy_pos as usize;
+        reset_reader_position(&mut global_cursor,
+                              char_cursors[c as usize].0.0,
+                              char_cursors[c as usize].1.0,
+                              char_cursors[c as usize].0.1 as usize,
+                              char_cursors[c as usize].1.1 as usize);
 
         kmer_cs.iter().enumerate().for_each(|(kmer_idx, kmer_c)| {
             while global_cursor.peek().is_some() && global_cursor.peek().unwrap() < *kmer_c {

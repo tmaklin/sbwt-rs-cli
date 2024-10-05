@@ -9,6 +9,7 @@ use crate::tempfile::TempFile;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
+use crate::bitpacked_kmer_sorting::cursors::reset_reader_position;
 use crate::bitpacked_kmer_sorting::cursors::rewind_reader;
 
 #[allow(dead_code)]
@@ -45,24 +46,14 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
         x
     }).collect();
 
-    global_cursor.dummy_reader.file.rewind();
-    global_cursor.nondummy_reader.file.rewind();
-    global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
-    global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
-    global_cursor.dummy_position = 0;
-    global_cursor.nondummy_position = 0;
-
+    rewind_reader(&mut global_cursor);
 
     for c in 0..(sigma as u8) {
-        let dummy_pos = char_cursors[c as usize].0.1;
-        let nondummy_pos = char_cursors[c as usize].1.1;
-
-        global_cursor.dummy_reader.file.set_position(char_cursors[c as usize].0.0);
-        global_cursor.nondummy_reader.file.set_position(char_cursors[c as usize].1.0);
-        global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
-        global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
-        global_cursor.dummy_position = dummy_pos as usize;
-        global_cursor.nondummy_position = nondummy_pos as usize;
+        reset_reader_position(&mut global_cursor,
+                              char_cursors[c as usize].0.0,
+                              char_cursors[c as usize].1.0,
+                              char_cursors[c as usize].0.1 as usize,
+                              char_cursors[c as usize].1.1 as usize);
 
         xs.iter().for_each(|(x, _)| {
             let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c);
