@@ -32,7 +32,7 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     has_predecessor.resize(n, false);
 
     let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
-    let mut char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursors::<B>(&mut emptyfile, sorted_kmers, k, sigma);
+    let char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursor_positions::<B>(&mut emptyfile, sorted_kmers, k, sigma);
 
     let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
         &mut emptyfile,
@@ -53,15 +53,15 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
 
 
     for c in 0..(sigma as u8) {
-        let dummy_pos = char_cursors[c as usize].dummy_reader.position();
-        let nondummy_pos = char_cursors[c as usize].nondummy_reader.position();
+        let dummy_pos = char_cursors[c as usize].0.1;
+        let nondummy_pos = char_cursors[c as usize].1.1;
 
-        global_cursor.dummy_reader.file.set_position(dummy_pos);
-        global_cursor.nondummy_reader.file.set_position(nondummy_pos);
-        global_cursor.dummy_kmer = char_cursors[c as usize].dummy_kmer;
-        global_cursor.nondummy_kmer = char_cursors[c as usize].nondummy_kmer;
-        global_cursor.dummy_position = char_cursors[c as usize].dummy_position();
-        global_cursor.nondummy_position = char_cursors[c as usize].nondummy_position();
+        global_cursor.dummy_reader.file.set_position(char_cursors[c as usize].0.0);
+        global_cursor.nondummy_reader.file.set_position(char_cursors[c as usize].1.0);
+        global_cursor.dummy_kmer = DummyNodeMerger::read_from_dummy_reader(global_cursor.dummy_reader);
+        global_cursor.nondummy_kmer = DummyNodeMerger::read_from_non_dummy_reader(global_cursor.nondummy_reader, k);
+        global_cursor.dummy_position = dummy_pos as usize;
+        global_cursor.nondummy_position = nondummy_pos as usize;
 
         xs.iter().for_each(|(x, _)| {
             let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c);
