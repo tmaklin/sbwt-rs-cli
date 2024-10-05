@@ -1,5 +1,4 @@
 use std::io::Cursor;
-use std::path::{Path};
 
 /// A simple struct to manage temporary files.
 /// All files will be created in the directory specified in the struct.

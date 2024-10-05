@@ -1,7 +1,5 @@
 //! A builder pattern interface for building an [SbwtIndex].
 
-use std::str::FromStr;
-
 use crate::{subsetseq::SubsetMatrix, SeqStream};
 use crate::sbwt::{PrefixLookupTable, SbwtIndex};
 use crate::streaming_index::LcsArray;

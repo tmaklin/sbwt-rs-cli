@@ -9,7 +9,7 @@ use crate::tempfile::TempFile;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
-use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
+use crate::bitpacked_kmer_sorting::cursors::rewind_reader;
 
 #[allow(dead_code)]
 struct NullReader{}

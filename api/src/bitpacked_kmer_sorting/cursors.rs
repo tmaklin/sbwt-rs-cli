@@ -1,5 +1,5 @@
 use std::borrow::BorrowMut;
-use std::io::{BufReader, Seek, Read};
+use std::io::{Seek, Read};
 
 use simple_sds_sbwt::{ops::Access, raw_vector::AccessRaw};
 use std::io::SeekFrom;
