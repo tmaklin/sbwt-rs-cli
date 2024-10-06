@@ -8,6 +8,9 @@ use super::kmer::LongKmer;
 use crate::util::binary_search_leftmost_that_fulfills_pred_mut;
 use crate::tempfile::TempFile;
 
+use rayon::iter::ParallelIterator;
+use rayon::iter::ParallelBridge;
+
 pub struct DummyNodeMerger<R: std::io::Read, const B: usize> {
     dummy_reader: R, // Stream of k-mer objects
     nondummy_reader: R, // Stream of pairs (kmer, len)
@@ -304,74 +307,115 @@ pub fn init_char_cursor_positions<const B: usize>(dummy_file: &mut TempFile, non
 
 }
 
+// Returns the LCS array
+pub fn build_lcs_array<const B: usize>(
+    kmers: &Vec<(LongKmer::<B>, u8)>,
+    k: usize,
+) -> simple_sds_sbwt::int_vector::IntVector {
+    // LCS values are between 0 and k-1
+    assert!(k > 0);
+    let n_kmers = kmers.len();
+    let bitwidth = 64 - (k as u64 - 1).leading_zeros();
+    let mut lcs = simple_sds_sbwt::int_vector::IntVector::with_len(n_kmers, bitwidth as usize, 0).unwrap();
+
+    let mut prev_kmer = LongKmer::<B>::from_ascii(b"").unwrap();
+    let mut prev_len = 0_usize;
+    kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
+        if kmer_idx > 0 {
+            // The longest common suffix is the longest common prefix of reversed k-mers
+            let mut lcs_value = LongKmer::<B>::lcp(&prev_kmer, &kmer);
+            lcs_value = min(lcs_value, min(prev_len, *len as usize));
+            lcs.set(kmer_idx, lcs_value as u64);
+        }
+        prev_kmer = *kmer;
+        prev_len = *len as usize;
+    });
+    lcs
+}
+
+pub fn split_global_cursor<const B: usize>(
+    global_cursor: &DummyNodeMerger<&mut TempFile, B>,
+    char_cursor_positions: &Vec<((u64, u64), (u64, u64))>,
+    sigma: usize,
+    k: usize,
+) -> Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>> {
+    let mut char_cursors = (0..(sigma - 1)).collect::<Vec<usize>>().into_iter().map(|c|{
+        DummyNodeMerger::new(
+            std::io::Cursor::<Vec<u8>>::new(
+                global_cursor.dummy_reader.file.get_ref()
+                    [(char_cursor_positions[c as usize].0.0 as usize)..(char_cursor_positions[c + 1 as usize].0.0 as usize)].to_vec()
+            ),
+            std::io::Cursor::<Vec<u8>>::new(
+                global_cursor.nondummy_reader.file.get_ref()
+                    [(char_cursor_positions[c as usize].1.0 as usize)..(char_cursor_positions[c + 1 as usize].1.0 as usize)].to_vec()
+            ),
+            k,
+        )
+    }).collect::<Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>>>();
+    char_cursors.push(
+        DummyNodeMerger::new(
+            std::io::Cursor::<Vec<u8>>::new(
+                global_cursor.dummy_reader.file.get_ref()
+                    [(char_cursor_positions[sigma - 1 as usize].0.0 as usize)..(global_cursor.dummy_reader.file.get_ref().len())].to_vec()
+            ),
+            std::io::Cursor::<Vec<u8>>::new(
+                global_cursor.nondummy_reader.file.get_ref()
+                    [(char_cursor_positions[sigma - 1 as usize].1.0 as usize)..(global_cursor.nondummy_reader.file.get_ref().len())].to_vec()
+            ),
+            k,
+        )
+    );
+    char_cursors
+}
+
 // Returns the SBWT bit vectors and optionally the LCS array
 pub fn build_sbwt_bit_vectors<const B: usize>(
     mut global_cursor: DummyNodeMerger<&mut TempFile, B>,
-    char_cursors: Vec<((u64, u64), (u64, u64))>,
+    char_cursor_positions: &Vec<((u64, u64), (u64, u64))>,
     n: usize,
     k: usize, 
     sigma: usize,
     build_lcs: bool) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>)
 {
     let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
-    let mut lcs = if build_lcs { 
-        // LCS values are between 0 and k-1
-        assert!(k > 0);
-        let bitwidth = 64 - (k as u64 - 1).leading_zeros();
-        Some(simple_sds_sbwt::int_vector::IntVector::with_len(n, bitwidth as usize, 0).unwrap()) } 
-    else { 
-        None 
-    };
 
     let kmers = global_cursor.borrow_mut().map(|(kmer, len)| {
         (kmer, len)
     }).collect::<Vec<(LongKmer::<B>, u8)>>();
 
-    if build_lcs {
-        let mut prev_kmer = LongKmer::<B>::from_ascii(b"").unwrap();
-        let mut prev_len = 0_usize;
-        kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
-            if kmer_idx > 0 {
-                // The longest common suffix is the longest common prefix of reversed k-mers
-                let mut lcs_value = LongKmer::<B>::lcp(&prev_kmer, &kmer);
-                lcs_value = min(lcs_value, min(prev_len, *len as usize));
-                lcs.as_mut().unwrap().set(kmer_idx, lcs_value as u64);
-            }
-            prev_kmer = *kmer;
-            prev_len = *len as usize;
-        });
-    }
+    let mut char_cursors = split_global_cursor(&global_cursor, char_cursor_positions, sigma, k);
 
-    for c in 0..(sigma as u8) {
-        reset_reader_position(&mut global_cursor,
-                              char_cursors[c as usize].0.0,
-                              char_cursors[c as usize].1.0,
-                              char_cursors[c as usize].0.1 as usize,
-                              char_cursors[c as usize].1.1 as usize);
-
+    char_cursors.iter_mut().zip(rawrows.iter_mut()).enumerate().par_bridge().for_each(|(c, (cursor, rawrows))|{
         kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
             let kmer_c = if *len as usize == k {
                 (
                     kmer.clone()
                         .set_from_left(k - 1, 0)
                         .right_shift(1)
-                        .set_from_left(0, c),
+                        .set_from_left(0, c as u8),
                     k as u8,
                 )
             } else {
-                (kmer.clone().right_shift(1).set_from_left(0, c), len + 1) // Dummy
+                (kmer.clone().right_shift(1).set_from_left(0, c as u8), len + 1) // Dummy
             };
 
-            while global_cursor.peek().is_some() && global_cursor.peek().unwrap() < kmer_c {
-                global_cursor.next();
+            while cursor.peek().is_some() && cursor.peek().unwrap() < kmer_c {
+                cursor.next();
             }
 
-            if global_cursor.peek().is_some() && global_cursor.peek().unwrap() == kmer_c {
-                rawrows[c as usize].set_bit(kmer_idx, true);
-                global_cursor.next();
+            if cursor.peek().is_some() && cursor.peek().unwrap() == kmer_c {
+                rawrows.set_bit(kmer_idx, true);
+                cursor.next();
             }
         });
-    }
+    });
+
+    let lcs = if build_lcs {
+        // LCS values are between 0 and k-1
+        Some(build_lcs_array(&kmers, k))
+    } else {
+        None
+    };
 
     (rawrows, lcs)
 
