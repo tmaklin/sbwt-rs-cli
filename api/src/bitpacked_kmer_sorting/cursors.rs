@@ -69,6 +69,21 @@ impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
         }
     }
 
+    pub fn new_with_initial_positions(mut dummy_reader: R, mut nondummy_reader: R, k: usize, dummy_position: usize, nondummy_position: usize) -> Self {
+        let dummy_kmer = Self::read_from_dummy_reader(&mut dummy_reader);
+        let nondummy_kmer = Self::read_from_non_dummy_reader(&mut nondummy_reader, k);
+
+        Self {
+            dummy_reader,
+            nondummy_reader,
+            dummy_kmer,
+            nondummy_kmer,
+            k,
+            dummy_position,
+            nondummy_position,
+        }
+    }
+
     pub fn peek(&self) -> Option<(LongKmer::<B>, u8)>{
         match (self.dummy_kmer, self.nondummy_kmer){
             (None, None) => None,
@@ -340,7 +355,7 @@ pub fn split_global_cursor<const B: usize>(
     k: usize,
 ) -> Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>> {
     let mut char_cursors = (0..(sigma - 1)).collect::<Vec<usize>>().into_iter().map(|c|{
-        DummyNodeMerger::new(
+        DummyNodeMerger::new_with_initial_positions(
             std::io::Cursor::<Vec<u8>>::new(
                 global_cursor.dummy_reader.file.get_ref()
                     [(char_cursor_positions[c as usize].0.0 as usize)..(char_cursor_positions[c + 1 as usize].0.0 as usize)].to_vec()
@@ -350,10 +365,12 @@ pub fn split_global_cursor<const B: usize>(
                     [(char_cursor_positions[c as usize].1.0 as usize)..(char_cursor_positions[c + 1 as usize].1.0 as usize)].to_vec()
             ),
             k,
+            char_cursor_positions[c as usize].0.1 as usize,
+            char_cursor_positions[c as usize].1.1 as usize,
         )
     }).collect::<Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>>>();
     char_cursors.push(
-        DummyNodeMerger::new(
+        DummyNodeMerger::new_with_initial_positions(
             std::io::Cursor::<Vec<u8>>::new(
                 global_cursor.dummy_reader.file.get_ref()
                     [(char_cursor_positions[sigma - 1 as usize].0.0 as usize)..(global_cursor.dummy_reader.file.get_ref().len())].to_vec()
@@ -363,6 +380,8 @@ pub fn split_global_cursor<const B: usize>(
                     [(char_cursor_positions[sigma - 1 as usize].1.0 as usize)..(global_cursor.nondummy_reader.file.get_ref().len())].to_vec()
             ),
             k,
+            char_cursor_positions[sigma - 1 as usize].0.1 as usize,
+            char_cursor_positions[sigma - 1 as usize].1.1 as usize,
         )
     );
     char_cursors
