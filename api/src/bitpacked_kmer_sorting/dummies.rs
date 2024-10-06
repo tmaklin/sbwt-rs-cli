@@ -1,7 +1,5 @@
 use std::borrow::BorrowMut;
 use std::io::{BufWriter, Write};
-use std::io::Seek;
-use std::io::SeekFrom;
 
 use super::kmer::LongKmer;
 use crate::tempfile::TempFileManager;
@@ -46,8 +44,6 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
         x
     }).collect();
 
-    rewind_reader(&mut global_cursor);
-
     for c in 0..(sigma as u8) {
         reset_reader_position(&mut global_cursor,
                               char_cursors[c as usize].0.0,
@@ -75,15 +71,7 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
         });
     }
 
-    // Rewind cursors
-    emptyfile.file.seek(SeekFrom::Start(0)).unwrap();
-    sorted_kmers.file.seek(SeekFrom::Start(0)).unwrap();
-
-    let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        &mut emptyfile,
-        sorted_kmers,
-        k,
-    ); // New global cursor
+    rewind_reader(&mut global_cursor);
 
     // Todo: stream to memory and sort there
     let mut required_dummies = Vec::<(LongKmer::<B>, u8)>::new(); // Pairs (data, length)
