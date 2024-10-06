@@ -313,12 +313,7 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
     sigma: usize,
     build_lcs: bool) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>)
 {
-
-    let mut rawrows = Vec::<simple_sds_sbwt::raw_vector::RawVector>::new();
-    for _ in 0..sigma {
-        rawrows.push(simple_sds_sbwt::raw_vector::RawVector::with_len(n, false));
-    }
-
+    let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
     let mut lcs = if build_lcs { 
         // LCS values are between 0 and k-1
         assert!(k > 0);
@@ -328,10 +323,9 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
         None 
     };
 
-    let mut prev_kmer = LongKmer::<B>::from_ascii(b"").unwrap();
-    let mut prev_len = 0_usize;
-
     if build_lcs {
+        let mut prev_kmer = LongKmer::<B>::from_ascii(b"").unwrap();
+        let mut prev_len = 0_usize;
         global_cursor.borrow_mut().enumerate().for_each(|(kmer_idx, (kmer, len))| {
             if kmer_idx > 0 {
                 // The longest common suffix is the longest common prefix of reversed k-mers
@@ -348,7 +342,7 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
 
         rewind_reader(&mut global_cursor);
 
-        let kmer_cs: Vec<(LongKmer::<B>, u8)> = global_cursor.borrow_mut().enumerate().map(|(_kmer_idx, (kmer, len))| {
+        let kmer_cs = global_cursor.borrow_mut().map(|(kmer, len)| {
             // The k-mers enumerated are reversed
             let kmer_c = if len as usize == k {
                 (
@@ -362,7 +356,7 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
                 (kmer.clone().right_shift(1).set_from_left(0, c), len + 1) // Dummy
             };
             kmer_c
-        }).collect();
+        }).collect::<Vec<(LongKmer::<B>, u8)>>();
 
         reset_reader_position(&mut global_cursor,
                               char_cursors[c as usize].0.0,
