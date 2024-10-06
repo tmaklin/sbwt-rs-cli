@@ -323,28 +323,34 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
         None 
     };
 
+    let kmers = global_cursor.borrow_mut().map(|(kmer, len)| {
+        (kmer, len)
+    }).collect::<Vec<(LongKmer::<B>, u8)>>();
+
     if build_lcs {
         let mut prev_kmer = LongKmer::<B>::from_ascii(b"").unwrap();
         let mut prev_len = 0_usize;
-        global_cursor.borrow_mut().enumerate().for_each(|(kmer_idx, (kmer, len))| {
+        kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
             if kmer_idx > 0 {
                 // The longest common suffix is the longest common prefix of reversed k-mers
                 let mut lcs_value = LongKmer::<B>::lcp(&prev_kmer, &kmer);
-                lcs_value = min(lcs_value, min(prev_len, len as usize));
+                lcs_value = min(lcs_value, min(prev_len, *len as usize));
                 lcs.as_mut().unwrap().set(kmer_idx, lcs_value as u64);
             }
-            prev_kmer = kmer;
-            prev_len = len as usize;
+            prev_kmer = *kmer;
+            prev_len = *len as usize;
         });
     }
 
     for c in 0..(sigma as u8) {
+        reset_reader_position(&mut global_cursor,
+                              char_cursors[c as usize].0.0,
+                              char_cursors[c as usize].1.0,
+                              char_cursors[c as usize].0.1 as usize,
+                              char_cursors[c as usize].1.1 as usize);
 
-        rewind_reader(&mut global_cursor);
-
-        let kmer_cs = global_cursor.borrow_mut().map(|(kmer, len)| {
-            // The k-mers enumerated are reversed
-            let kmer_c = if len as usize == k {
+        kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
+            let kmer_c = if *len as usize == k {
                 (
                     kmer.clone()
                         .set_from_left(k - 1, 0)
@@ -355,21 +361,12 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
             } else {
                 (kmer.clone().right_shift(1).set_from_left(0, c), len + 1) // Dummy
             };
-            kmer_c
-        }).collect::<Vec<(LongKmer::<B>, u8)>>();
 
-        reset_reader_position(&mut global_cursor,
-                              char_cursors[c as usize].0.0,
-                              char_cursors[c as usize].1.0,
-                              char_cursors[c as usize].0.1 as usize,
-                              char_cursors[c as usize].1.1 as usize);
-
-        kmer_cs.iter().enumerate().for_each(|(kmer_idx, kmer_c)| {
-            while global_cursor.peek().is_some() && global_cursor.peek().unwrap() < *kmer_c {
+            while global_cursor.peek().is_some() && global_cursor.peek().unwrap() < kmer_c {
                 global_cursor.next();
             }
 
-            if global_cursor.peek().is_some() && global_cursor.peek().unwrap() == *kmer_c {
+            if global_cursor.peek().is_some() && global_cursor.peek().unwrap() == kmer_c {
                 rawrows[c as usize].set_bit(kmer_idx, true);
                 global_cursor.next();
             }
