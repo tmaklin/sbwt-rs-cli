@@ -387,6 +387,14 @@ pub fn split_global_cursor<const B: usize>(
     char_cursors
 }
 
+pub fn read_kmers<const B: usize>(
+    global_cursor: &mut DummyNodeMerger<&mut TempFile, B>,
+) -> Vec<(LongKmer::<B>, u8)> {
+    global_cursor.map(|x| {
+        x
+    }).collect()
+}
+
 // Returns the SBWT bit vectors and optionally the LCS array
 pub fn build_sbwt_bit_vectors<const B: usize>(
     mut global_cursor: DummyNodeMerger<&mut TempFile, B>,
@@ -398,9 +406,7 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
 {
     let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
 
-    let kmers = global_cursor.borrow_mut().map(|(kmer, len)| {
-        (kmer, len)
-    }).collect::<Vec<(LongKmer::<B>, u8)>>();
+    let kmers = read_kmers(global_cursor.borrow_mut());
 
     let mut char_cursors = split_global_cursor(&global_cursor, char_cursor_positions, sigma, k);
 

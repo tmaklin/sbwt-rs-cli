@@ -8,6 +8,7 @@ use simple_sds_sbwt::bit_vector::BitVector;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
+use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
 use crate::bitpacked_kmer_sorting::cursors::split_global_cursor;
 
 #[allow(dead_code)]
@@ -19,22 +20,46 @@ impl std::io::Read for NullReader{
     }
 }
 
+pub fn get_set_bits<const B: usize>(
+    kmers: &Vec<(LongKmer::<B>, u8)>,
+    cursor: &mut DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>,
+    k: usize,
+    c: u8,
+) -> Vec<usize> {
+    let mut set_bits: Vec<usize> = Vec::new();
+    kmers.iter().for_each(|(x, _)| {
+        let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c as u8);
+
+        while cursor.peek().is_some(){
+            match cursor.peek().unwrap().0.cmp(&xc) {
+                std::cmp::Ordering::Greater => {
+                    break
+                },
+                std::cmp::Ordering::Equal => {
+                    set_bits.push(cursor.nondummy_position());
+                    // has_predecessor.set_bit(cursor.nondummy_position(), true);
+                    cursor.next(); // Advance
+                    break
+                },
+                std::cmp::Ordering::Less => {
+                    cursor.next(); // Advance
+                    // no break
+                }
+            }
+        }
+    });
+    set_bits
+}
+
 // We take in a path and not a file object because we need multiple readers to the same file
 pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: usize, k: usize, temp_file_manager: &mut TempFileManager) -> Vec<(LongKmer::<B>, u8)>{
-
-    // Todo: I'm using dummy merger cursors with an empty dummy file. Should refactor things to manage without the
-    // empty dummy file.
-
     // Number of k-mers in file
     let n = sorted_kmers.avail_in() as usize / LongKmer::<B>::byte_size();
-
-    let mut has_predecessor = simple_sds_sbwt::raw_vector::RawVector::new();
-    has_predecessor.resize(n, false);
 
     let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
     let char_cursor_positions = crate::bitpacked_kmer_sorting::cursors::init_char_cursor_positions::<B>(&mut emptyfile, sorted_kmers, k, sigma);
 
-    let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
+    let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
         &mut emptyfile,
         sorted_kmers,
         k,
@@ -42,32 +67,19 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
 
     let mut char_cursors = split_global_cursor(&global_cursor, &char_cursor_positions, sigma, k);
 
-    let xs: Vec<(LongKmer::<B>, u8)> = global_cursor.map(|x| {
-        x
-    }).collect();
+    let xs = crate::bitpacked_kmer_sorting::cursors::read_kmers(&mut global_cursor);
 
-    for c in 0..(sigma as u8) {
-        xs.iter().for_each(|(x, _)| {
-            let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c);
+    let set_bits = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {
+        get_set_bits(&xs, cursor, k, c as u8)
+    }).flatten().collect::<Vec<usize>>();
 
-            while char_cursors[c as usize].peek().is_some(){
-                match char_cursors[c as usize].peek().unwrap().0.cmp(&xc) {
-                    std::cmp::Ordering::Greater => {
-                        break
-                    },
-                    std::cmp::Ordering::Equal => {
-                        has_predecessor.set_bit(char_cursors[c as usize].nondummy_position(), true);
-                        char_cursors[c as usize].next(); // Advance
-                        break
-                    },
-                    std::cmp::Ordering::Less => {
-                        char_cursors[c as usize].next(); // Advance
-                        // no break
-                    }
-                }
-            }
-        });
-    }
+    let mut has_predecessor = simple_sds_sbwt::raw_vector::RawVector::new();
+    has_predecessor.resize(n, false);
+
+    // TODO there should be a better way to initialize this?
+    set_bits.iter().for_each(|idx| {
+        has_predecessor.set_bit(*idx, true);
+    });
 
     let iterable = BitVector::from(has_predecessor);
     let mut required_dummies: Vec::<(LongKmer::<B>, u8)> = iterable.zero_iter().par_bridge().map(|x| {
