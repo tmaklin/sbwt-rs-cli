@@ -8,7 +8,10 @@ use std::borrow::BorrowMut;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
+use rayon::prelude::ParallelSliceMut;
+use rayon::prelude::ParallelSlice;
 
+#[allow(dead_code)]
 fn colex_sorted_binmers(bin_prefix_len: usize) -> Vec<Vec<u8>> {
     let mut binmers = Vec::<Vec<u8>>::new();
     for i in 0..(4_usize.pow(bin_prefix_len as u32)){
@@ -23,7 +26,7 @@ fn colex_sorted_binmers(bin_prefix_len: usize) -> Vec<Vec<u8>> {
     binmers
 }
 
-pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, k: usize, _mem_gb: usize, _n_threads: usize, _dedup_batches: bool, temp_file_manager: &mut TempFileManager) -> Vec<TempFile>{
+pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, k: usize, _mem_gb: usize, _n_threads: usize, _dedup_batches: bool, _temp_file_manager: &mut TempFileManager) -> Vec<TempFile>{
 
     // Suppose we have a memory budget of m bytes and t threads.
     // Suppose each k-mer takes s bytes and there are 64 bins.
@@ -47,33 +50,27 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
         buf.push(seq_copy.into_boxed_slice());
     }
 
-    // Create writers
-    let mut bin_writers = colex_sorted_binmers(bin_prefix_len).into_iter().map(|binmer| {
-        let name_prefix = format!("sbwt-temp-{}-", String::from_utf8(binmer).unwrap());
-        temp_file_manager.create_new_file(&name_prefix, 8, ".bin")
-    }).collect::<Vec<TempFile>>();
-
-    let kmers: Vec<LongKmer::<B>> = buf.par_iter().map(|seq| {
-        seq.windows(k).filter_map(|kmer| {
-            LongKmer::<B>::from_ascii(kmer).ok()
+    let mut kmers = buf.par_iter().map(|seq| {
+        seq.windows(k).filter_map(|bytes| {
+            LongKmer::<B>::from_ascii(bytes).ok()
         }).collect::<Vec<LongKmer::<B>>>()
-    }).flatten().collect();
+    }).flatten().collect::<Vec<LongKmer::<B>>>();
 
-    kmers.iter().for_each(|kmer| {
-        let bin_id = kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize; // Interpret nucleotides in base-4
-        let bin_file = &mut bin_writers[bin_id];
-        kmer.serialize(bin_file).unwrap(); // Todo: write all at once
+    kmers.par_sort_by_key(|kmer| {
+        kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize
     });
 
-    // Return the TempFiles
-    for w in bin_writers.iter_mut(){
-        match w.file.rewind() {
-            Ok(_) => (),
-            Err(e) => panic!("Couldn't rewind file: {}", e)
-        }
-    }
-    bin_writers
-
+    kmers.par_chunk_by(|&a, &b| {
+        let x = a.get_from_left(0) as usize * 16 + a.get_from_left(1) as usize * 4 + a.get_from_left(2) as usize;
+        let y = b.get_from_left(0) as usize * 16 + b.get_from_left(1) as usize * 4 + b.get_from_left(2) as usize;
+        x == y}).map(|chunk| {
+        let mut writer = TempFile { file: std::io::Cursor::new(Vec::new()) };
+        chunk.iter().for_each(|kmer| {
+            kmer.serialize(&mut writer).expect("Serialized kmer to TempFile");
+        });
+        writer.file.rewind().expect("Rewinded TempFile");
+        writer
+    }).collect::<Vec<TempFile>>()
 }
 
 // Overwrite the files with sorted and deduplicates files. Returns back the files after overwriting.
