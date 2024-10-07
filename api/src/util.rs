@@ -63,7 +63,7 @@ pub(crate) fn get_C_array(rawrows: &[simple_sds_sbwt::raw_vector::RawVector]) ->
     let sigma = rawrows.len();
     assert!(sigma > 0);
 
-    let Cs: Vec<Vec<usize>> = rawrows.par_iter().enumerate().map(|(c, rawrow)| {
+    let mut C: Vec<usize> = rawrows.par_iter().enumerate().map(|(c, rawrow)| {
         let bv = BitVector::from(rawrow.clone());
         let mut C: Vec<usize> = vec![0; sigma];
         bv.one_iter().for_each(|_| {
@@ -72,13 +72,7 @@ pub(crate) fn get_C_array(rawrows: &[simple_sds_sbwt::raw_vector::RawVector]) ->
             }
         });
         C
-    }).collect();
-
-    let mut C: Vec<usize> = vec![0; sigma];
-
-    for c in 0..sigma {
-        C[c] += Cs.iter().map(|x| x[c]).sum::<usize>();
-    }
+    }).reduce(|| vec![0; sigma], |a, b| a.iter().zip(b.iter()).map(|(x, y)| x + y).collect());
 
     // Plus one for the ghost dollar
     #[allow(clippy::needless_range_loop)] // Is perfectly clear this way
