@@ -4,11 +4,12 @@ use std::io::{BufWriter, Write};
 use super::kmer::LongKmer;
 use crate::tempfile::TempFileManager;
 use crate::tempfile::TempFile;
+use simple_sds_sbwt::ops::SelectZero;
+use simple_sds_sbwt::bit_vector::BitVector;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
 use crate::bitpacked_kmer_sorting::cursors::reset_reader_position;
-use crate::bitpacked_kmer_sorting::cursors::rewind_reader;
 
 #[allow(dead_code)]
 struct NullReader{}
@@ -44,6 +45,7 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
         x
     }).collect();
 
+
     for c in 0..(sigma as u8) {
         reset_reader_position(&mut global_cursor,
                               char_cursors[c as usize].0.0,
@@ -56,7 +58,9 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
 
             while global_cursor.peek().is_some(){
                 match global_cursor.peek().unwrap().0.cmp(&xc) {
-                    std::cmp::Ordering::Greater => break,
+                    std::cmp::Ordering::Greater => {
+                        break
+                    },
                     std::cmp::Ordering::Equal => {
                         has_predecessor.set_bit(global_cursor.nondummy_position(), true);
                         global_cursor.next(); // Advance
@@ -71,22 +75,15 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
         });
     }
 
-    rewind_reader(&mut global_cursor);
-
-    // Todo: stream to memory and sort there
-    let mut required_dummies = Vec::<(LongKmer::<B>, u8)>::new(); // Pairs (data, length)
-
-    while let Some((x, _)) = global_cursor.peek(){
-        if !has_predecessor.bit(global_cursor.nondummy_position()){
-            let mut prefix = x;
-            for i in 0..k {
-                let len = k - i - 1;
-                prefix = prefix.left_shift(1);
-                required_dummies.push((prefix, len as u8));
-            }
-        }
-        global_cursor.next(); // Advance
-    }
+    let iterable = BitVector::from(has_predecessor);
+    let mut required_dummies: Vec::<(LongKmer::<B>, u8)> = iterable.zero_iter().par_bridge().map(|x| {
+        let mut prefix = xs[x.1].0;
+        (0..k).collect::<Vec<usize>>().iter().map(|i| {
+            let len = k - i - 1;
+            prefix = prefix.left_shift(1);
+            (prefix, len as u8)
+        }).collect::<Vec<(LongKmer::<B>, u8)>>()
+    }).flatten().collect();
 
     // We always assume that the empty k-mer exists. This assumption is reflected in the C-arrya
     // later, which adds one "ghost dollar" count to all counts.
@@ -95,6 +92,7 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     required_dummies.par_sort();
     required_dummies.dedup();
     required_dummies.shrink_to_fit();
+
     required_dummies
     
 
