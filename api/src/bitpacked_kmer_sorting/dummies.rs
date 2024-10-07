@@ -3,6 +3,7 @@ use std::io::{BufWriter, Write};
 use super::kmer::LongKmer;
 use crate::tempfile::TempFileManager;
 use crate::tempfile::TempFile;
+use simple_sds_sbwt::ops::Select;
 use simple_sds_sbwt::ops::SelectZero;
 use simple_sds_sbwt::bit_vector::BitVector;
 use simple_sds_sbwt::raw_vector::*;
@@ -25,8 +26,10 @@ pub fn get_set_bits<const B: usize>(
     cursor: &mut DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>,
     k: usize,
     c: u8,
-) -> Vec<usize> {
-    let mut set_bits: Vec<usize> = Vec::new();
+) -> simple_sds_sbwt::raw_vector::RawVector {
+    let mut bits = simple_sds_sbwt::raw_vector::RawVector::new();
+    bits.resize(kmers.len(), false);
+    // let mut set_bits: Vec<usize> = Vec::new();
     kmers.iter().for_each(|(x, _)| {
         let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c as u8);
 
@@ -36,8 +39,8 @@ pub fn get_set_bits<const B: usize>(
                     break
                 },
                 std::cmp::Ordering::Equal => {
-                    set_bits.push(cursor.nondummy_position());
-                    // has_predecessor.set_bit(cursor.nondummy_position(), true);
+                    // set_bits.push(cursor.nondummy_position());
+                    bits.set_bit(cursor.nondummy_position(), true);
                     cursor.next(); // Advance
                     break
                 },
@@ -48,7 +51,7 @@ pub fn get_set_bits<const B: usize>(
             }
         }
     });
-    set_bits
+    bits
 }
 
 // We take in a path and not a file object because we need multiple readers to the same file
@@ -71,16 +74,16 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
         (LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap(), 0 as u8)
     }).collect::<Vec<(LongKmer::<B>, u8)>>();
 
-    let set_bits = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {
+    let has_predecessor = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {
         get_set_bits(&xs, cursor, k, c as u8)
-    }).flatten().collect::<Vec<usize>>();
-
-    let mut has_predecessor = simple_sds_sbwt::raw_vector::RawVector::new();
-    has_predecessor.resize(n, false);
-
-    // TODO there should be a better way to initialize this?
-    set_bits.iter().for_each(|idx| {
-        has_predecessor.set_bit(*idx, true);
+    }).reduce(|| {
+        let mut res = simple_sds_sbwt::raw_vector::RawVector::new();
+        res.resize(n, false);
+        res
+    }, |mut a, b| {
+        let bv = BitVector::from(b);
+        bv.one_iter().for_each(|idx| a.set_bit(idx.1, true));
+        a
     });
 
     let iterable = BitVector::from(has_predecessor);
