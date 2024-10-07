@@ -408,14 +408,14 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
         kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
             let kmer_c = if *len as usize == k {
                 (
-                    kmer.clone()
+                    kmer
                         .set_from_left(k - 1, 0)
                         .right_shift(1)
                         .set_from_left(0, c as u8),
                     k as u8,
                 )
             } else {
-                (kmer.clone().right_shift(1).set_from_left(0, c as u8), len + 1) // Dummy
+                (kmer.right_shift(1).set_from_left(0, c as u8), len + 1) // Dummy
             };
 
             while cursor.peek().is_some() && cursor.peek().unwrap() < kmer_c {
