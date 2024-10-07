@@ -1,4 +1,3 @@
-use std::borrow::BorrowMut;
 use std::io::{BufWriter, Write};
 
 use super::kmer::LongKmer;
@@ -9,7 +8,7 @@ use simple_sds_sbwt::bit_vector::BitVector;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
-use crate::bitpacked_kmer_sorting::cursors::reset_reader_position;
+use crate::bitpacked_kmer_sorting::cursors::split_global_cursor;
 
 #[allow(dead_code)]
 struct NullReader{}
@@ -33,41 +32,36 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     has_predecessor.resize(n, false);
 
     let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
-    let char_cursors = crate::bitpacked_kmer_sorting::cursors::init_char_cursor_positions::<B>(&mut emptyfile, sorted_kmers, k, sigma);
+    let char_cursor_positions = crate::bitpacked_kmer_sorting::cursors::init_char_cursor_positions::<B>(&mut emptyfile, sorted_kmers, k, sigma);
 
-    let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
+    let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
         &mut emptyfile,
         sorted_kmers,
         k,
     );
 
-    let xs: Vec<(LongKmer::<B>, u8)> = global_cursor.borrow_mut().map(|x| {
+    let mut char_cursors = split_global_cursor(&global_cursor, &char_cursor_positions, sigma, k);
+
+    let xs: Vec<(LongKmer::<B>, u8)> = global_cursor.map(|x| {
         x
     }).collect();
 
-
     for c in 0..(sigma as u8) {
-        reset_reader_position(&mut global_cursor,
-                              char_cursors[c as usize].0.0,
-                              char_cursors[c as usize].1.0,
-                              char_cursors[c as usize].0.1 as usize,
-                              char_cursors[c as usize].1.1 as usize);
-
         xs.iter().for_each(|(x, _)| {
             let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c);
 
-            while global_cursor.peek().is_some(){
-                match global_cursor.peek().unwrap().0.cmp(&xc) {
+            while char_cursors[c as usize].peek().is_some(){
+                match char_cursors[c as usize].peek().unwrap().0.cmp(&xc) {
                     std::cmp::Ordering::Greater => {
                         break
                     },
                     std::cmp::Ordering::Equal => {
-                        has_predecessor.set_bit(global_cursor.nondummy_position(), true);
-                        global_cursor.next(); // Advance
+                        has_predecessor.set_bit(char_cursors[c as usize].nondummy_position(), true);
+                        char_cursors[c as usize].next(); // Advance
                         break
                     },
                     std::cmp::Ordering::Less => {
-                        global_cursor.next(); // Advance
+                        char_cursors[c as usize].next(); // Advance
                         // no break
                     }
                 }
