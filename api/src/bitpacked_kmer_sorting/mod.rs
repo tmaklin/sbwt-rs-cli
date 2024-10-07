@@ -9,6 +9,7 @@ mod kmer_chunk;
 use std::io::Seek;
 
 use crate::{sbwt::{PrefixLookupTable, SbwtIndex}, streaming_index::LcsArray, subsetseq::SubsetSeq, tempfile::TempFileManager, util::DNA_ALPHABET};
+use crate::bitpacked_kmer_sorting::kmer_splitter::concat_files_take;
 
 /// Build using bitpacked k-mer sorting. See [SbwtIndexBuilder](crate::builder::SbwtIndexBuilder) for a wrapper with a more 
 /// user-friendly interface. B is the number u64 words in a k-mer.
@@ -22,9 +23,7 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
     log::info!("Sorting and deduplicating bins");
     kmer_splitter::par_sort_and_dedup_bin_files::<B>(&mut bin_files, mem_gb, n_threads);
 
-    let mut kmers_file = temp_file_manager.create_new_file("kmers-", 10, ".bin");
-    kmer_splitter::concat_files(bin_files, &mut kmers_file.file);
-    kmers_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    let mut kmers_file = concat_files_take(&mut bin_files);
 
     let n_kmers = kmers_file.avail_in() / kmer::LongKmer::<B>::byte_size();
 

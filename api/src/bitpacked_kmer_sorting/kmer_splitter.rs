@@ -102,6 +102,7 @@ pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: &mut Vec<TempFile
 }
 
 // The original files are deleted
+#[allow(dead_code)]
 pub fn concat_files(infiles: Vec<TempFile>, out_writer: &mut impl std::io::Write){
     let mut bw = BufWriter::new(out_writer);
     for mut fp in infiles {
@@ -110,6 +111,11 @@ pub fn concat_files(infiles: Vec<TempFile>, out_writer: &mut impl std::io::Write
         drop(fp);
     }
     bw.flush().unwrap();
+}
+
+// The original files are deleted
+pub fn concat_files_take(infiles: &mut Vec<TempFile>) -> TempFile {
+    TempFile{ file: std::io::Cursor::new(infiles.par_iter_mut().map(|x| std::mem::take(x.file.get_mut())).flatten().collect::<Vec<u8>>()) }
 }
 
 mod tests {
