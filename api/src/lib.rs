@@ -137,6 +137,8 @@ pub use sbwt::*;
 mod builder;
 pub use builder::*;
 
+use needletail::Sequence;
+
 mod streaming_index;
 pub use streaming_index::*;
 
@@ -165,16 +167,25 @@ impl<'a, SS: crate::SeqStream> unitig_flipper::SeqStream<'a> for UnitigFlipperSe
     }
 }
 
-pub(crate) struct JSeqIOSeqStreamWrapper {
-    pub(crate) inner: jseqio::reader::DynamicFastXReader,
+struct JSeqIOSeqStreamWrapper {
+    inner: Box<dyn needletail::parser::FastxReader>,
+    record: Vec<u8>
 }
 
 impl crate::SeqStream for JSeqIOSeqStreamWrapper {
     fn stream_next(&mut self) -> Option<&[u8]> {
-        self.inner.read_next().unwrap().map(|rec| rec.seq)
-    }
+        let rec = self.inner.next();
+        match rec {
+            Some(Ok(seqrec)) => {
+                // Remove newlines and non IUPAC characters
+                let normalized = seqrec.normalize(true);
+                self.record = normalized.as_ref().to_vec();
+                Some(&self.record)
+            },
+            _ => None,
+        }
+   }
 }
-
 
 /// Given an iterator of canonical unitigs of the node-centric de Bruijn graph of order k, 
 /// returns a vector of orientations, one for each sequence, aiming to
