@@ -56,18 +56,20 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     // Number of k-mers in file
     let n = sorted_kmers.avail_in() as usize / LongKmer::<B>::byte_size();
 
+    // TODO Initialize char_cursor_positions without emptyfile and global_cursor.
+
     let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
     let char_cursor_positions = crate::bitpacked_kmer_sorting::cursors::init_char_cursor_positions::<B>(&mut emptyfile, sorted_kmers, k, sigma);
-
-    let mut global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
+    let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
         &mut emptyfile,
         sorted_kmers,
         k,
     );
-
     let mut char_cursors = split_global_cursor(&global_cursor, &char_cursor_positions, sigma, k);
 
-    let xs = crate::bitpacked_kmer_sorting::cursors::read_kmers(&mut global_cursor);
+    let xs = sorted_kmers.file.get_mut().par_chunks(LongKmer::<B>::byte_size()).map(|mut bytes| {
+        (LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap(), 0 as u8)
+    }).collect::<Vec<(LongKmer::<B>, u8)>>();
 
     let set_bits = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {
         get_set_bits(&xs, cursor, k, c as u8)
