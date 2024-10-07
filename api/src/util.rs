@@ -1,7 +1,13 @@
 //! Miscellaneous utility functions and constants used in the crate.
 
 use bitvec::prelude::*;
-use simple_sds_sbwt::raw_vector::AccessRaw;
+
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::ParallelIterator;
+
+use simple_sds_sbwt::bit_vector::BitVector;
+use simple_sds_sbwt::ops::Select;
 
 // Returns the number of bytes written
 pub(crate) fn write_bytes<W: std::io::Write>(out: &mut W, bytes: &[u8]) -> std::io::Result<usize>{
@@ -56,17 +62,22 @@ pub const ACGT_TO_0123: [u8; 256] = [255, 255, 255, 255, 255, 255, 255, 255, 255
 pub(crate) fn get_C_array(rawrows: &[simple_sds_sbwt::raw_vector::RawVector]) -> Vec<usize> {
     let sigma = rawrows.len();
     assert!(sigma > 0);
-    let n = rawrows[0].len();
+
+    let Cs: Vec<Vec<usize>> = rawrows.par_iter().enumerate().map(|(c, rawrow)| {
+        let bv = BitVector::from(rawrow.clone());
+        let mut C: Vec<usize> = vec![0; sigma];
+        bv.one_iter().for_each(|_| {
+            for d in (c + 1)..(sigma) {
+                C[d as usize] += 1;
+            }
+        });
+        C
+    }).collect();
 
     let mut C: Vec<usize> = vec![0; sigma];
-    for i in 0..n {
-        for c in 0..(sigma as u8) {
-            if rawrows[c as usize].bit(i){
-                for d in (c + 1)..(sigma as u8) {
-                    C[d as usize] += 1;
-                }
-            }
-        }
+
+    for c in 0..sigma {
+        C[c] += Cs.iter().map(|x| x[c]).sum::<usize>();
     }
 
     // Plus one for the ghost dollar
