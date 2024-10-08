@@ -11,6 +11,7 @@ use rayon::prelude::*;
 
 use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
 use crate::bitpacked_kmer_sorting::cursors::split_global_cursor;
+use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy;
 
 #[allow(dead_code)]
 struct NullReader{}
@@ -59,10 +60,17 @@ pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: us
     // Number of k-mers in file
     let n = sorted_kmers.avail_in() as usize / LongKmer::<B>::byte_size();
 
-    // TODO Initialize char_cursor_positions without emptyfile and global_cursor.
+    let mut char_cursor_positions: Vec<((u64, u64), (u64, u64))> = Vec::new();
+    for c in 0..sigma as u8 {
+        char_cursor_positions.push(
+            ((0, 0), // Dummies dont' exist yet
+             find_in_nondummy::<B>(sorted_kmers, c))
+        );
+    }
+
+    // TODO Initialize char_cursors without global_cursor.
 
     let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
-    let char_cursor_positions = crate::bitpacked_kmer_sorting::cursors::init_char_cursor_positions::<B>(&mut emptyfile, sorted_kmers, k, sigma);
     let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
         &mut emptyfile,
         sorted_kmers,
