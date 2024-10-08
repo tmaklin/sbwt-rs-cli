@@ -223,7 +223,7 @@ pub fn find_in_nondummy<const B: usize>(
     assert_eq!(nondummy_file_len % nondummy_record_len, 0);
 
     let access_fn = |pos| {
-		nondummy_file.file.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
+        nondummy_file.file.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
         LongKmer::<B>::load(&mut nondummy_file.file).unwrap().unwrap() // Should never be None because we know the file length
     };
 
