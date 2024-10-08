@@ -343,43 +343,29 @@ pub fn read_kmers<const B: usize>(
 
     global_cursor.nondummy_reader.file.set_position(0);
 
-    let kmers = global_cursor.nondummy_reader.file.get_mut().par_chunks(LongKmer::<B>::byte_size()).filter_map(|mut bytes| {
-        let kmer = LongKmer::<B>::load(&mut bytes).expect("Valid k-mer");
-        kmer
-    }).collect::<Vec<LongKmer::<B>>>();
-
-    assert!(n_kmers == kmers.len());
-
     let mut dummy_idx = 0;
-    let mut kmer_idx = 0;
-    let mut merged: Vec<(LongKmer::<B>, u8)> = vec![dummies[0]; n_kmers + n_dummies];
-    merged.reserve_exact(n_kmers + n_dummies);
-
-    let mut prev_kmer = (kmers[0], k as u8);
-    for i in 0..(n_kmers + n_dummies - 1) {
+    let mut kmers: Vec<(LongKmer::<B>, u8)> = vec![dummies[0]; n_kmers + n_dummies];
+    kmers.reserve_exact(n_kmers + n_dummies);
+    let mut prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+    for i in 0..(n_kmers + n_dummies) {
         // Could implement default for LongKmer and see if using mem:;take is faster
-        std::mem::swap(&mut merged[i], &mut if kmer_idx >= n_kmers {
+        std::mem::swap(&mut kmers[i], &mut if dummy_idx >= n_dummies {
+            let kmer = prev_kmer;
+            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+            (kmer.0.unwrap(), kmer.1)
+        } else if !prev_kmer.0.is_some() {
             dummy_idx += 1;
             dummies[dummy_idx - 1]
-        } else if dummy_idx >= n_dummies {
-            kmer_idx += 1;
-            prev_kmer = (kmers[kmer_idx], k as u8);
-            (kmers[kmer_idx - 1], k as u8)
-        } else if dummies[dummy_idx] < prev_kmer {
+        } else if dummies[dummy_idx] < (prev_kmer.0.unwrap(), prev_kmer.1) {
             dummy_idx += 1;
             dummies[dummy_idx - 1]
         } else {
-            kmer_idx += 1;
-            prev_kmer = (kmers[kmer_idx], k as u8);
-            (kmers[kmer_idx - 1], k as u8)
+            let kmer = prev_kmer;
+            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+            (kmer.0.unwrap(), kmer.1)
         });
     };
-    if dummy_idx < n_dummies {
-        merged[n_kmers + n_dummies - 1] = dummies[dummy_idx];
-    } else {
-        merged[n_kmers + n_dummies - 1] = (kmers[kmer_idx], k as u8);
-    }
-    merged
+    kmers
 }
 
 // Returns the SBWT bit vectors and optionally the LCS array
