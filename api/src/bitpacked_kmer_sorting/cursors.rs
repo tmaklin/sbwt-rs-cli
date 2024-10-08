@@ -181,6 +181,66 @@ impl<const B: usize> Iterator for DummyNodeMerger<std::io::Cursor<Vec<u8>>, B> {
 
 }
 
+pub fn find_in_dummy<const B: usize>(
+    dummy_file: &mut TempFile,
+    c: u8,
+) -> (u64, u64) {
+    let dummy_file_len = dummy_file.avail_in() as usize;
+    let dummy_record_len = LongKmer::<B>::byte_size() + 1; // Pairs (kmer, len byte)
+    assert_eq!(dummy_file_len % dummy_record_len, 0);
+
+    let access_fn = |pos| {
+        dummy_file.file.seek(SeekFrom::Start(pos as u64 * dummy_record_len as u64)).unwrap();
+        let kmer = LongKmer::<B>::load(&mut dummy_file.file).unwrap().unwrap(); // Should never be none because we know the file length
+
+        // Read the length byte
+        let mut len_buf = [0_u8; 1];
+        dummy_file.file.read_exact(&mut len_buf).unwrap();
+        let len = u8::from_le_bytes(len_buf);
+        (kmer, len)
+    };
+
+    let pred_fn = |kmer: (LongKmer::<B>,u8)| {
+        kmer.1 > 0 && kmer.0.get_from_left(0) >= c
+    };
+
+    let start = binary_search_leftmost_that_fulfills_pred_mut(
+        access_fn,
+        pred_fn,
+        dummy_file_len / dummy_record_len);
+
+    dummy_file.file.seek(SeekFrom::Start(start as u64 * dummy_record_len as u64)).unwrap();
+    (dummy_file.file.position(), start as u64)
+
+}
+
+pub fn find_in_nondummy<const B: usize>(
+    nondummy_file: &mut TempFile,
+    c: u8,
+) -> (u64, u64) {
+    let nondummy_file_len = nondummy_file.avail_in() as usize;
+    let nondummy_record_len = LongKmer::<B>::byte_size();
+    assert_eq!(nondummy_file_len % nondummy_record_len, 0);
+
+    let access_fn = |pos| {
+		nondummy_file.file.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
+        LongKmer::<B>::load(&mut nondummy_file.file).unwrap().unwrap() // Should never be None because we know the file length
+    };
+
+    let pred_fn = |kmer: LongKmer::<B>| {
+        kmer.get_from_left(0) >= c
+    };
+
+    let start = binary_search_leftmost_that_fulfills_pred_mut(
+        access_fn,
+        pred_fn,
+        nondummy_file_len / nondummy_record_len);
+
+    nondummy_file.file.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
+    (nondummy_file.file.position(), start as u64)
+
+}
+
 // We take in Paths instead of a Files because we need multiple readers to the same files 
 pub fn init_char_cursor_positions<const B: usize>(dummy_file: &mut TempFile, nondummy_file: &mut TempFile, _k: usize, sigma: usize)
 -> Vec<((u64, u64), (u64, u64))>{
@@ -188,61 +248,8 @@ pub fn init_char_cursor_positions<const B: usize>(dummy_file: &mut TempFile, non
     for c in 0..(sigma as u8){
         log::trace!("Searching character {}", c);
 
-        let (dummy_reader_pos, dummy_pos) =
-        { // Seek in dummies
-
-            let dummy_file_len = dummy_file.avail_in() as usize;
-            let dummy_record_len = LongKmer::<B>::byte_size() + 1; // Pairs (kmer, len byte)
-            assert_eq!(dummy_file_len % dummy_record_len, 0);
-    
-            let access_fn = |pos| {
-                dummy_file.file.seek(SeekFrom::Start(pos as u64 * dummy_record_len as u64)).unwrap();
-                let kmer = LongKmer::<B>::load(&mut dummy_file.file).unwrap().unwrap(); // Should never be none because we know the file length
-
-                // Read the length byte
-                let mut len_buf = [0_u8; 1];
-                dummy_file.file.read_exact(&mut len_buf).unwrap();
-                let len = u8::from_le_bytes(len_buf);
-                (kmer, len)
-            };
-
-            let pred_fn = |kmer: (LongKmer::<B>,u8)| {
-                kmer.1 > 0 && kmer.0.get_from_left(0) >= c
-            };
-
-            let start = binary_search_leftmost_that_fulfills_pred_mut(
-                access_fn, 
-                pred_fn, 
-                dummy_file_len / dummy_record_len);
-
-            dummy_file.file.seek(SeekFrom::Start(start as u64 * dummy_record_len as u64)).unwrap();
-            (dummy_file.file.position(), start as u64)
-        };
-
-        let (nondummy_reader_pos, nondummy_pos) =
-        { // Seek in nondummies
-
-            let nondummy_file_len = nondummy_file.avail_in() as usize;
-            let nondummy_record_len = LongKmer::<B>::byte_size();
-            assert_eq!(nondummy_file_len % nondummy_record_len, 0);
-    
-            let access_fn = |pos| {
-		        nondummy_file.file.seek(SeekFrom::Start(pos as u64 * nondummy_record_len as u64)).unwrap();
-                LongKmer::<B>::load(&mut nondummy_file.file).unwrap().unwrap() // Should never be None because we know the file length
-            };
-
-            let pred_fn = |kmer: LongKmer::<B>| {
-                kmer.get_from_left(0) >= c
-            };
-
-            let start = binary_search_leftmost_that_fulfills_pred_mut(
-                access_fn, 
-                pred_fn, 
-                nondummy_file_len / nondummy_record_len);
-
-            nondummy_file.file.seek(SeekFrom::Start(start as u64 * nondummy_record_len as u64)).unwrap();
-            (nondummy_file.file.position(), start as u64)
-        };
+        let (dummy_reader_pos, dummy_pos) = find_in_dummy::<B>(dummy_file, c);
+        let (nondummy_reader_pos, nondummy_pos) = find_in_nondummy::<B>(nondummy_file, c);
 
         let cursor = ((dummy_reader_pos, dummy_pos), (nondummy_reader_pos, nondummy_pos));
         char_cursor_positions.push(cursor);
