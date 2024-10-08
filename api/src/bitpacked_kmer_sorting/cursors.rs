@@ -1,7 +1,7 @@
 use std::borrow::BorrowMut;
 use std::io::{Seek, Read};
 
-use simple_sds_sbwt::{ops::Access, raw_vector::AccessRaw};
+use simple_sds_sbwt::{raw_vector::AccessRaw};
 use std::io::SeekFrom;
 use std::cmp::min;
 use super::kmer::LongKmer;
@@ -268,23 +268,17 @@ pub fn build_lcs_array<const B: usize>(
 ) -> simple_sds_sbwt::int_vector::IntVector {
     // LCS values are between 0 and k-1
     assert!(k > 0);
-    let n_kmers = kmers.len();
-    let bitwidth = 64 - (k as u64 - 1).leading_zeros();
-    let mut lcs = simple_sds_sbwt::int_vector::IntVector::with_len(n_kmers, bitwidth as usize, 0).unwrap();
 
-    let mut prev_kmer = LongKmer::<B>::from_ascii(b"").unwrap();
-    let mut prev_len = 0_usize;
-    kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
-        if kmer_idx > 0 {
-            // The longest common suffix is the longest common prefix of reversed k-mers
-            let mut lcs_value = LongKmer::<B>::lcp(&prev_kmer, &kmer);
-            lcs_value = min(lcs_value, min(prev_len, *len as usize));
-            lcs.set(kmer_idx, lcs_value as u64);
-        }
-        prev_kmer = *kmer;
-        prev_len = *len as usize;
-    });
-    lcs
+    std::iter::once(0_usize).chain(kmers.par_windows(2).map(|window| {
+        // The longest common suffix is the longest common prefix of reversed k-mers
+        let prev_kmer = &window[0].0;
+        let prev_len = &window[0].1;
+        let kmer = &window[1].0;
+        let len = &window[1].1;
+        let mut lcs_value = LongKmer::<B>::lcp(&prev_kmer, &kmer);
+        lcs_value = min(lcs_value, min(*prev_len as usize, *len as usize));
+        lcs_value
+    }).collect::<Vec<usize>>().into_iter()).collect::<simple_sds_sbwt::int_vector::IntVector>()
 }
 
 pub fn split_global_cursor<const B: usize>(
@@ -332,6 +326,7 @@ pub fn read_kmers<const B: usize>(
 ) -> Vec<(LongKmer::<B>, u8)> {
     let n_kmers = global_cursor.nondummy_reader.file.get_ref().len() / LongKmer::<B>::byte_size();
     let n_dummies = global_cursor.dummy_reader.file.get_ref().len() / (LongKmer::<B>::byte_size() + 1);
+    let n_merged = n_kmers + n_dummies;
 
     let dummies = global_cursor.dummy_reader.file.get_mut().par_chunks(LongKmer::<B>::byte_size() + 1).map(|mut bytes| {
         let kmer = LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap();
@@ -344,10 +339,10 @@ pub fn read_kmers<const B: usize>(
     global_cursor.nondummy_reader.file.set_position(0);
 
     let mut dummy_idx = 0;
-    let mut kmers: Vec<(LongKmer::<B>, u8)> = vec![dummies[0]; n_kmers + n_dummies];
+    let mut kmers: Vec<(LongKmer::<B>, u8)> = vec![dummies[0]; n_merged];
     kmers.reserve_exact(n_kmers + n_dummies);
     let mut prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
-    for i in 0..(n_kmers + n_dummies) {
+    for i in 0..n_merged {
         // Could implement default for LongKmer and see if using mem:;take is faster
         kmers[i] = if dummy_idx >= n_dummies {
             let kmer = prev_kmer;
