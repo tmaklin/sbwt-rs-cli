@@ -10,7 +10,6 @@ use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
 use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
-use crate::bitpacked_kmer_sorting::cursors::split_global_cursor;
 use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy;
 
 #[allow(dead_code)]
@@ -56,31 +55,37 @@ pub fn get_set_bits<const B: usize>(
 }
 
 // We take in a path and not a file object because we need multiple readers to the same file
-pub fn get_sorted_dummies<const B: usize>(sorted_kmers: &mut TempFile, sigma: usize, k: usize, temp_file_manager: &mut TempFileManager) -> Vec<(LongKmer::<B>, u8)>{
+pub fn get_sorted_dummies<const B: usize>(
+    sorted_kmers: &mut TempFile,
+    sigma: usize, k: usize,
+    _temp_file_manager: &mut TempFileManager
+) -> Vec<(LongKmer::<B>, u8)>{
     // Number of k-mers in file
     let n = sorted_kmers.avail_in() as usize / LongKmer::<B>::byte_size();
-
-    let mut char_cursor_positions: Vec<((u64, u64), (u64, u64))> = Vec::new();
-    for c in 0..sigma as u8 {
-        char_cursor_positions.push(
-            ((0, 0), // Dummies dont' exist yet
-             find_in_nondummy::<B>(sorted_kmers, c))
-        );
-    }
-
-    // TODO Initialize char_cursors without global_cursor.
-
-    let mut emptyfile = temp_file_manager.create_new_file("empty-", 10, ".bin");
-    let global_cursor = crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger::new(
-        &mut emptyfile,
-        sorted_kmers,
-        k,
-    );
-    let mut char_cursors = split_global_cursor(&global_cursor, &char_cursor_positions, sigma, k);
-
     let xs = sorted_kmers.file.get_mut().par_chunks(LongKmer::<B>::byte_size()).map(|mut bytes| {
         (LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap(), 0 as u8)
     }).collect::<Vec<(LongKmer::<B>, u8)>>();
+
+
+    let mut char_cursors = (0..sigma).map(|c|{
+        let pos = find_in_nondummy::<B>(sorted_kmers, c as u8);
+        let start = pos.0 as usize;
+        let end = if c < sigma - 1 {
+            find_in_nondummy::<B>(sorted_kmers, c as u8 + 1).0
+        } else {
+            sorted_kmers.file.get_ref().len() as u64
+        };
+        DummyNodeMerger::new_with_initial_positions(
+            std::io::Cursor::<Vec<u8>>::new(Vec::with_capacity(0)),
+            std::io::Cursor::<Vec<u8>>::new(Vec::from(
+                &sorted_kmers.file.get_ref()
+                    [start..(end as usize)]
+            )),
+            k,
+            0,
+            pos.1 as usize,
+        )
+    }).collect::<Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>>>();
 
     let has_predecessor = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {
         get_set_bits(&xs, cursor, k, c as u8)
