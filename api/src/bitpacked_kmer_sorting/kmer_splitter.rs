@@ -56,7 +56,7 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
         }).collect::<Vec<LongKmer::<B>>>()
     }).flatten().collect::<Vec<LongKmer::<B>>>();
 
-    kmers.par_sort_by_key(|kmer| {
+    kmers.par_sort_unstable_by_key(|kmer| {
         kmer.get_from_left(0) as usize * 16 + kmer.get_from_left(1) as usize * 4 + kmer.get_from_left(2) as usize
     });
 
