@@ -349,7 +349,7 @@ pub fn read_kmers<const B: usize>(
     let mut prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
     for i in 0..(n_kmers + n_dummies) {
         // Could implement default for LongKmer and see if using mem:;take is faster
-        std::mem::swap(&mut kmers[i], &mut if dummy_idx >= n_dummies {
+        kmers[i] = if dummy_idx >= n_dummies {
             let kmer = prev_kmer;
             prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
             (kmer.0.unwrap(), kmer.1)
@@ -363,7 +363,7 @@ pub fn read_kmers<const B: usize>(
             let kmer = prev_kmer;
             prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
             (kmer.0.unwrap(), kmer.1)
-        });
+        };
     };
     kmers
 }
