@@ -8,8 +8,9 @@ use super::kmer::LongKmer;
 use crate::util::binary_search_leftmost_that_fulfills_pred_mut;
 use crate::tempfile::TempFile;
 
-use rayon::iter::ParallelIterator;
 use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
+use rayon::prelude::ParallelSlice;
 
 pub struct DummyNodeMerger<R: std::io::Read, const B: usize> {
     dummy_reader: R, // Stream of k-mer objects
@@ -327,10 +328,44 @@ pub fn split_global_cursor<const B: usize>(
 
 pub fn read_kmers<const B: usize>(
     global_cursor: &mut DummyNodeMerger<&mut TempFile, B>,
+    k: usize,
 ) -> Vec<(LongKmer::<B>, u8)> {
-    global_cursor.map(|x| {
-        x
-    }).collect()
+    let n_kmers = global_cursor.nondummy_reader.file.get_ref().len() / LongKmer::<B>::byte_size();
+    let n_dummies = global_cursor.dummy_reader.file.get_ref().len() / (LongKmer::<B>::byte_size() + 1);
+
+    let dummies = global_cursor.dummy_reader.file.get_mut().par_chunks(LongKmer::<B>::byte_size() + 1).map(|mut bytes| {
+        let kmer = LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap();
+        let mut buf = [0_u8; 1];
+        bytes.read_exact(&mut buf).unwrap();
+        let len = u8::from_le_bytes(buf);
+        (kmer, len)
+    }).collect::<Vec<(LongKmer::<B>, u8)>>();
+
+    global_cursor.nondummy_reader.file.set_position(0);
+
+    let mut dummy_idx = 0;
+    let mut kmers: Vec<(LongKmer::<B>, u8)> = vec![dummies[0]; n_kmers + n_dummies];
+    kmers.reserve_exact(n_kmers + n_dummies);
+    let mut prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+    for i in 0..(n_kmers + n_dummies) {
+        // Could implement default for LongKmer and see if using mem:;take is faster
+        std::mem::swap(&mut kmers[i], &mut if dummy_idx >= n_dummies {
+            let kmer = prev_kmer;
+            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+            (kmer.0.unwrap(), kmer.1)
+        } else if !prev_kmer.0.is_some() {
+            dummy_idx += 1;
+            dummies[dummy_idx - 1]
+        } else if dummies[dummy_idx] < (prev_kmer.0.unwrap(), prev_kmer.1) {
+            dummy_idx += 1;
+            dummies[dummy_idx - 1]
+        } else {
+            let kmer = prev_kmer;
+            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+            (kmer.0.unwrap(), kmer.1)
+        });
+    };
+    kmers
 }
 
 // Returns the SBWT bit vectors and optionally the LCS array
@@ -344,8 +379,7 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
 {
     let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
 
-    let kmers = read_kmers(global_cursor.borrow_mut());
-
+    let kmers = read_kmers(global_cursor.borrow_mut(), k);
     let mut char_cursors = split_global_cursor(&global_cursor, char_cursor_positions, sigma, k);
 
     char_cursors.iter_mut().zip(rawrows.iter_mut()).enumerate().par_bridge().for_each(|(c, (cursor, rawrows))|{
