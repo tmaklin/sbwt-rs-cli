@@ -66,8 +66,8 @@ pub fn get_sorted_dummies<const B: usize>(
         (LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap(), 0 as u8)
     }).collect::<Vec<(LongKmer::<B>, u8)>>();
 
-
-    let mut char_cursors = (0..sigma).map(|c|{
+    // Iterate in reverse bc moving data from the beginning of sorted_kmers is slow
+    let mut char_cursors = (0..sigma).rev().map(|c|{
         let pos = find_in_nondummy::<B>(sorted_kmers, c as u8);
         let start = pos.0 as usize;
         let end = if c < sigma - 1 {
@@ -77,15 +77,15 @@ pub fn get_sorted_dummies<const B: usize>(
         };
         DummyNodeMerger::new_with_initial_positions(
             std::io::Cursor::<Vec<u8>>::new(Vec::with_capacity(0)),
-            std::io::Cursor::<Vec<u8>>::new(Vec::from(
-                &sorted_kmers.file.get_ref()
-                    [start..(end as usize)]
-            )),
+            std::io::Cursor::<Vec<u8>>::new(Vec::from(std::mem::take(
+                &mut sorted_kmers.file.get_ref()
+                    [start..(end as usize)].to_vec()
+            ))),
             k,
             0,
             pos.1 as usize,
         )
-    }).collect::<Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>>>();
+    }).rev().collect::<Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>>>();
 
     let has_predecessor = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {
         get_set_bits(&xs, cursor, k, c as u8)
