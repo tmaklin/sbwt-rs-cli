@@ -99,28 +99,20 @@ pub fn split_global_cursor<const B: usize>(
     char_cursor_positions: &Vec<(u64, u64)>,
     sigma: usize,
 ) -> Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)> {
-
-    let mut char_cursors = (0..(sigma - 1)).map(|c|{
+    (0..sigma).map(|c|{
+        let dummies_start = char_cursor_positions[c].0 as usize;
+        let kmers_start = char_cursor_positions[c].1 as usize;
+        let dummies_end = if c == sigma - 1 { dummies.get_ref().len() } else { char_cursor_positions[c + 1].0 as usize };
+        let kmers_end = if c == sigma - 1 { kmers.get_ref().len() } else { char_cursor_positions[c + 1].1 as usize };
         (std::io::Cursor::new(Vec::from(
             dummies.get_ref()
-                [(char_cursor_positions[c as usize].0 as usize)..(char_cursor_positions[c + 1 as usize].0 as usize)].to_vec()
+                [dummies_start..dummies_end].to_vec()
         )),
         std::io::Cursor::new(Vec::from(
             kmers.get_ref()
-                [(char_cursor_positions[c as usize].1 as usize)..(char_cursor_positions[c + 1 as usize].1 as usize)].to_vec()
+                [kmers_start..kmers_end].to_vec()
         )))
-    }).collect::<Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)>>();
-    char_cursors.push(
-        (std::io::Cursor::new(Vec::from(
-            dummies.get_ref()
-                [(char_cursor_positions[sigma - 1 as usize].0 as usize)..(dummies.get_ref().len())].to_vec()
-        )),
-        std::io::Cursor::new(Vec::from(
-            kmers.get_ref()
-                [(char_cursor_positions[sigma - 1 as usize].1 as usize)..(kmers.get_ref().len())].to_vec()
-        ))));
-
-    char_cursors
+    }).collect::<Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)>>()
 }
 
 pub fn read_kmer_or_dummy<const B: usize>(
