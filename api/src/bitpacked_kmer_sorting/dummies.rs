@@ -63,9 +63,9 @@ pub fn get_sorted_dummies<const B: usize>(
     // Iterate in reverse bc moving data from the beginning of sorted_kmers is slow
     let mut char_cursors = (0..sigma).rev().map(|c|{
         let pos = find_in_nondummy::<B>(sorted_kmers, c as u8);
-        let start = pos.0 as usize;
+        let start = pos as usize;
         let end = if c < sigma - 1 {
-            find_in_nondummy::<B>(sorted_kmers, c as u8 + 1).0
+            find_in_nondummy::<B>(sorted_kmers, c as u8 + 1)
         } else {
             sorted_kmers.get_ref().len() as u64
         };
@@ -73,7 +73,7 @@ pub fn get_sorted_dummies<const B: usize>(
             &mut sorted_kmers.get_ref()
                     [start..(end as usize)].to_vec()
         ))),
-        pos.1 as usize)
+        pos as usize)
     }).rev().collect::<Vec<(std::io::Cursor::<Vec<LongKmer::<B>>>, usize)>>();
 
     let has_predecessor = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {

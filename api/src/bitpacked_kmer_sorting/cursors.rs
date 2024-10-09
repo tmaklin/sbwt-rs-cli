@@ -10,7 +10,7 @@ use rayon::prelude::ParallelSlice;
 pub fn find_in_dummy<const B: usize>(
     dummy_file: &std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
     c: u8,
-) -> (u64, u64) {
+) -> u64 {
     let dummy_file_len = dummy_file.get_ref().len();
 
     let access_fn = |pos| {
@@ -27,13 +27,13 @@ pub fn find_in_dummy<const B: usize>(
         pred_fn,
         dummy_file_len);
 
-    (start as u64, start as u64)
+    start as u64
 }
 
 pub fn find_in_nondummy<const B: usize>(
     nondummy_file: &std::io::Cursor<Vec<LongKmer<B>>>,
     c: u8,
-) -> (u64, u64) {
+) -> u64 {
     let nondummy_file_len = nondummy_file.get_ref().len() as usize;
 
     let access_fn = |pos| {
@@ -49,7 +49,7 @@ pub fn find_in_nondummy<const B: usize>(
         pred_fn,
         nondummy_file_len);
 
-    (start as u64, start as u64)
+    start as u64
 
 }
 
@@ -58,15 +58,15 @@ pub fn init_char_cursor_positions<const B: usize>(
     kmers: &std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
     sigma: usize
-) -> Vec<((u64, u64), (u64, u64))>{
-    let mut char_cursor_positions = Vec::<((u64, u64), (u64, u64))>::new();
+) -> Vec<(u64, u64)>{
+    let mut char_cursor_positions = Vec::<(u64, u64)>::new();
     for c in 0..(sigma as u8){
         log::trace!("Searching character {}", c);
 
-        let (dummy_reader_pos, dummy_pos) = find_in_dummy::<B>(dummies, c);
-        let (nondummy_reader_pos, nondummy_pos) = find_in_nondummy::<B>(kmers, c);
+        let dummy_reader_pos = find_in_dummy::<B>(dummies, c);
+        let nondummy_reader_pos = find_in_nondummy::<B>(kmers, c);
 
-        let cursor = ((dummy_reader_pos, dummy_pos), (nondummy_reader_pos, nondummy_pos));
+        let cursor = (dummy_reader_pos, nondummy_reader_pos);
         char_cursor_positions.push(cursor);
     }
 
@@ -96,28 +96,28 @@ pub fn build_lcs_array<const B: usize>(
 pub fn split_global_cursor<const B: usize>(
     kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
-    char_cursor_positions: &Vec<((u64, u64), (u64, u64))>,
+    char_cursor_positions: &Vec<(u64, u64)>,
     sigma: usize,
 ) -> Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)> {
 
     let mut char_cursors = (0..(sigma - 1)).map(|c|{
         (std::io::Cursor::new(Vec::from(
             dummies.get_ref()
-                [(char_cursor_positions[c as usize].0.0 as usize)..(char_cursor_positions[c + 1 as usize].0.0 as usize)].to_vec()
+                [(char_cursor_positions[c as usize].0 as usize)..(char_cursor_positions[c + 1 as usize].0 as usize)].to_vec()
         )),
         std::io::Cursor::new(Vec::from(
             kmers.get_ref()
-                [(char_cursor_positions[c as usize].1.0 as usize)..(char_cursor_positions[c + 1 as usize].1.0 as usize)].to_vec()
+                [(char_cursor_positions[c as usize].1 as usize)..(char_cursor_positions[c + 1 as usize].1 as usize)].to_vec()
         )))
     }).collect::<Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)>>();
     char_cursors.push(
         (std::io::Cursor::new(Vec::from(
             dummies.get_ref()
-                [(char_cursor_positions[sigma - 1 as usize].0.0 as usize)..(dummies.get_ref().len())].to_vec()
+                [(char_cursor_positions[sigma - 1 as usize].0 as usize)..(dummies.get_ref().len())].to_vec()
         )),
         std::io::Cursor::new(Vec::from(
             kmers.get_ref()
-                [(char_cursor_positions[sigma - 1 as usize].1.0 as usize)..(kmers.get_ref().len())].to_vec()
+                [(char_cursor_positions[sigma - 1 as usize].1 as usize)..(kmers.get_ref().len())].to_vec()
         ))));
 
     char_cursors
