@@ -5,7 +5,7 @@ mod kmer_splitter;
 mod cursors;
 mod kmer;
 
-use std::io::Seek;
+use std::io::Write;
 
 use crate::{sbwt::{PrefixLookupTable, SbwtIndex}, streaming_index::LcsArray, subsetseq::SubsetSeq, tempfile::TempFileManager, util::DNA_ALPHABET};
 use crate::bitpacked_kmer_sorting::kmer_splitter::concat_files_take;
@@ -30,15 +30,9 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
     log::info!("{} distinct k-mers found", n_kmers);
     let required_dummies = dummies::get_sorted_dummies::<B>(&mut kmers_file, sigma, k, temp_file_manager);
 
-    let n = n_kmers + required_dummies.len();
+    let n = n_kmers + required_dummies.get_ref().len();
 
-    // Write dummies to disk
-    let mut dummy_file = temp_file_manager.create_new_file("dummies-", 10, ".bin");
-    dummies::write_to_disk(required_dummies, &mut dummy_file);
-    
     log::info!("Constructing the sbwt subset sequence");
-
-    // TODO remove this temp serialization
 
     let mut serialized_kmers = TempFile{ file: std::io::Cursor::new(Vec::new()) };
     kmers_file.get_ref().iter().for_each(|kmer| {
@@ -46,18 +40,19 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
     });
     serialized_kmers.file.set_position(0);
 
-    let char_cursors = cursors::init_char_cursor_positions::<B>(&mut dummy_file, &mut serialized_kmers, k, sigma);
+    let mut serialized_dummies = TempFile{ file: std::io::Cursor::new(Vec::new()) };
+    required_dummies.get_ref().iter().for_each(|(kmer, len)| {
+        kmer.serialize(&mut serialized_dummies).expect("Serialized kmer to TempFile");
+        serialized_dummies.write_all(&[*len]).unwrap();
+    });
+    serialized_kmers.file.set_position(0);
 
-    dummy_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
-    serialized_kmers.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    let char_cursors = cursors::init_char_cursor_positions::<B>(&mut serialized_dummies, &mut serialized_kmers, k, sigma);
 
-    let global_cursor = cursors::DummyNodeMerger::new(
-        &mut dummy_file,
-        &mut serialized_kmers,
-        k,
-    );
+    serialized_kmers.file.set_position(0);
+    serialized_dummies.file.set_position(0);
 
-    let (rawrows, lcs) = cursors::build_sbwt_bit_vectors::<B>(global_cursor, &char_cursors, n, k, sigma, build_lcs);
+    let (rawrows, lcs) = cursors::build_sbwt_bit_vectors::<B>(&mut serialized_kmers.file, &mut serialized_dummies.file, &char_cursors, n, k, sigma, build_lcs);
 
     // Create the C array
     #[allow(non_snake_case)] // C-array is an established convention in BWT indexes

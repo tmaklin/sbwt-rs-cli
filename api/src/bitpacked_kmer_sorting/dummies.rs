@@ -59,7 +59,7 @@ pub fn get_sorted_dummies<const B: usize>(
     sorted_kmers: &mut std::io::Cursor::<Vec<LongKmer::<B>>>,
     sigma: usize, k: usize,
     _temp_file_manager: &mut TempFileManager
-) -> Vec<(LongKmer::<B>, u8)>{
+) -> std::io::Cursor<Vec<(LongKmer<B>, u8)>> {
     // Number of k-mers in file
     let n = sorted_kmers.get_ref().len();
 
@@ -109,9 +109,8 @@ pub fn get_sorted_dummies<const B: usize>(
     required_dummies.dedup();
     required_dummies.shrink_to_fit();
 
-    required_dummies
-    
-
+    let dummy_file: std::io::Cursor::<Vec<(LongKmer::<B>, u8)>> = std::io::Cursor::new(Vec::from(required_dummies));
+    dummy_file
 }
 
 pub fn write_to_disk<const B: usize>(dummies: Vec<(LongKmer::<B>, u8)>, writer: &mut TempFile){

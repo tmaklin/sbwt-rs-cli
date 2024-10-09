@@ -307,7 +307,7 @@ pub fn build_lcs_array<const B: usize>(
 }
 
 pub fn split_global_cursor<const B: usize>(
-    global_cursor: &DummyNodeMerger<&mut TempFile, B>,
+    global_cursor: &mut DummyNodeMerger<&mut std::io::Cursor<Vec<u8>>, B>,
     char_cursor_positions: &Vec<((u64, u64), (u64, u64))>,
     sigma: usize,
     k: usize,
@@ -315,11 +315,11 @@ pub fn split_global_cursor<const B: usize>(
     let mut char_cursors = (0..(sigma - 1)).collect::<Vec<usize>>().into_iter().map(|c|{
         DummyNodeMerger::new_with_initial_positions(
             std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.dummy_reader.file.get_ref()
+                global_cursor.dummy_reader.get_ref()
                     [(char_cursor_positions[c as usize].0.0 as usize)..(char_cursor_positions[c + 1 as usize].0.0 as usize)].to_vec()
             ),
             std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.nondummy_reader.file.get_ref()
+                global_cursor.nondummy_reader.get_ref()
                     [(char_cursor_positions[c as usize].1.0 as usize)..(char_cursor_positions[c + 1 as usize].1.0 as usize)].to_vec()
             ),
             k,
@@ -330,12 +330,12 @@ pub fn split_global_cursor<const B: usize>(
     char_cursors.push(
         DummyNodeMerger::new_with_initial_positions(
             std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.dummy_reader.file.get_ref()
-                    [(char_cursor_positions[sigma - 1 as usize].0.0 as usize)..(global_cursor.dummy_reader.file.get_ref().len())].to_vec()
+                global_cursor.dummy_reader.get_ref()
+                    [(char_cursor_positions[sigma - 1 as usize].0.0 as usize)..(global_cursor.dummy_reader.get_ref().len())].to_vec()
             ),
             std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.nondummy_reader.file.get_ref()
-                    [(char_cursor_positions[sigma - 1 as usize].1.0 as usize)..(global_cursor.nondummy_reader.file.get_ref().len())].to_vec()
+                global_cursor.nondummy_reader.get_ref()
+                    [(char_cursor_positions[sigma - 1 as usize].1.0 as usize)..(global_cursor.nondummy_reader.get_ref().len())].to_vec()
             ),
             k,
             char_cursor_positions[sigma - 1 as usize].0.1 as usize,
@@ -346,14 +346,14 @@ pub fn split_global_cursor<const B: usize>(
 }
 
 pub fn read_kmers<const B: usize>(
-    global_cursor: &mut DummyNodeMerger<&mut TempFile, B>,
+    global_cursor: &mut DummyNodeMerger<&mut std::io::Cursor<Vec<u8>>, B>,
     k: usize,
 ) -> Vec<(LongKmer::<B>, u8)> {
-    let n_kmers = global_cursor.nondummy_reader.file.get_ref().len() / LongKmer::<B>::byte_size();
-    let n_dummies = global_cursor.dummy_reader.file.get_ref().len() / (LongKmer::<B>::byte_size() + 1);
+    let n_kmers = global_cursor.nondummy_reader.get_ref().len() / LongKmer::<B>::byte_size();
+    let n_dummies = global_cursor.dummy_reader.get_ref().len() / (LongKmer::<B>::byte_size() + 1);
     let n_merged = n_kmers + n_dummies;
 
-    let dummies = global_cursor.dummy_reader.file.get_mut().par_chunks(LongKmer::<B>::byte_size() + 1).map(|mut bytes| {
+    let dummies = global_cursor.dummy_reader.get_mut().par_chunks(LongKmer::<B>::byte_size() + 1).map(|mut bytes| {
         let kmer = LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap();
         let mut buf = [0_u8; 1];
         bytes.read_exact(&mut buf).unwrap();
@@ -361,15 +361,15 @@ pub fn read_kmers<const B: usize>(
         (kmer, len)
     }).collect::<Vec<(LongKmer::<B>, u8)>>();
 
-    global_cursor.nondummy_reader.file.set_position(0);
+    global_cursor.nondummy_reader.set_position(0);
 
     let mut dummy_idx = 0;
-    let mut prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+    let mut prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader).expect("Valid k-mer"), k as u8);
     (0..n_merged).map(|_| {
         // Could implement default for LongKmer and see if using mem:;take is faster
         if dummy_idx >= n_dummies {
             let kmer = prev_kmer;
-            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader).expect("Valid k-mer"), k as u8);
             (kmer.0.unwrap(), kmer.1)
         } else if !prev_kmer.0.is_some() {
             dummy_idx += 1;
@@ -379,7 +379,7 @@ pub fn read_kmers<const B: usize>(
             dummies[dummy_idx - 1]
         } else {
             let kmer = prev_kmer;
-            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader.file).expect("Valid k-mer"), k as u8);
+            prev_kmer = (LongKmer::<B>::load(&mut global_cursor.nondummy_reader).expect("Valid k-mer"), k as u8);
             (kmer.0.unwrap(), kmer.1)
         }
     }).collect::<Vec<(LongKmer::<B>, u8)>>()
@@ -387,17 +387,25 @@ pub fn read_kmers<const B: usize>(
 
 // Returns the SBWT bit vectors and optionally the LCS array
 pub fn build_sbwt_bit_vectors<const B: usize>(
-    mut global_cursor: DummyNodeMerger<&mut TempFile, B>,
+    serialized_kmers: &mut std::io::Cursor<Vec<u8>>,
+    serialized_dummies: &mut std::io::Cursor<Vec<u8>>,
     char_cursor_positions: &Vec<((u64, u64), (u64, u64))>,
     n: usize,
     k: usize, 
     sigma: usize,
     build_lcs: bool) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>)
 {
+
+    let mut global_cursor = DummyNodeMerger::new(
+        serialized_dummies,
+        serialized_kmers,
+        k,
+    );
+
     let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
 
-    let kmers = read_kmers(global_cursor.borrow_mut(), k);
-    let mut char_cursors = split_global_cursor(&global_cursor, char_cursor_positions, sigma, k);
+    let kmers = read_kmers::<B>(global_cursor.borrow_mut(), k);
+    let mut char_cursors = split_global_cursor(&mut global_cursor, char_cursor_positions, sigma, k);
 
     char_cursors.iter_mut().zip(rawrows.iter_mut()).enumerate().par_bridge().for_each(|(c, (cursor, rawrows))|{
         kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
