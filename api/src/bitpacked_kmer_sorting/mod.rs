@@ -25,7 +25,7 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
     let n_kmers = kmers_file.get_ref().len();
 
     log::info!("{} distinct k-mers found", n_kmers);
-    let mut required_dummies = dummies::get_sorted_dummies::<B>(&mut kmers_file, sigma, k, temp_file_manager);
+    let mut required_dummies = dummies::get_sorted_dummies::<B>(&mut kmers_file, sigma, k);
 
     let n = n_kmers + required_dummies.get_ref().len();
 

@@ -1,21 +1,11 @@
+use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy;
 use super::kmer::LongKmer;
-use crate::tempfile::TempFileManager;
+
 use simple_sds_sbwt::ops::Select;
 use simple_sds_sbwt::ops::SelectZero;
 use simple_sds_sbwt::bit_vector::BitVector;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
-
-use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy;
-
-#[allow(dead_code)]
-struct NullReader{}
-
-impl std::io::Read for NullReader{
-    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize>{
-        Ok(0) // EoF
-    }
-}
 
 pub fn get_set_bits<const B: usize>(
     kmers: &Vec<LongKmer::<B>>,
@@ -48,6 +38,7 @@ pub fn get_set_bits<const B: usize>(
             }
         }
     });
+
     bits
 }
 
@@ -55,7 +46,6 @@ pub fn get_set_bits<const B: usize>(
 pub fn get_sorted_dummies<const B: usize>(
     sorted_kmers: &mut std::io::Cursor::<Vec<LongKmer::<B>>>,
     sigma: usize, k: usize,
-    _temp_file_manager: &mut TempFileManager
 ) -> std::io::Cursor<Vec<(LongKmer<B>, u8)>> {
     // Number of k-mers in file
     let n = sorted_kmers.get_ref().len();
@@ -106,6 +96,5 @@ pub fn get_sorted_dummies<const B: usize>(
     required_dummies.dedup();
     required_dummies.shrink_to_fit();
 
-    let dummy_file: std::io::Cursor::<Vec<(LongKmer::<B>, u8)>> = std::io::Cursor::new(Vec::from(required_dummies));
-    dummy_file
+    std::io::Cursor::new(Vec::from(required_dummies))
 }
