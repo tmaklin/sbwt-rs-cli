@@ -50,7 +50,6 @@ pub fn find_in_nondummy<const B: usize>(
         nondummy_file_len);
 
     start as u64
-
 }
 
 // Returns the LCS array
@@ -125,24 +124,24 @@ pub fn read_kmer_or_dummy<const B: usize>(
 
 // Returns the SBWT bit vectors and optionally the LCS array
 pub fn build_sbwt_bit_vectors<const B: usize>(
-    kmers_file: &mut std::io::Cursor<Vec<LongKmer<B>>>,
-    required_dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
+    kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
+    dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
     n: usize,
     k: usize, 
     sigma: usize,
-    build_lcs: bool) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>
-) {
+    build_lcs: bool,
+) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>) {
 
-    let mut kmers: Vec<(LongKmer::<B>, u8)> = Vec::with_capacity(kmers_file.get_ref().len() + required_dummies.get_ref().len());
-    while let Some(kmer) = read_kmer_or_dummy(kmers_file, required_dummies, k) {
-        kmers.push(kmer);
+    let mut merged: Vec<(LongKmer::<B>, u8)> = Vec::with_capacity(kmers.get_ref().len() + dummies.get_ref().len());
+    while let Some(kmer) = read_kmer_or_dummy(kmers, dummies, k) {
+        merged.push(kmer);
     }
 
     let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
-    let mut char_cursors = split_global_cursor(kmers_file, required_dummies, sigma as u8);
+    let mut char_cursors = split_global_cursor(kmers, dummies, sigma as u8);
     char_cursors.iter_mut().zip(rawrows.iter_mut()).enumerate().par_bridge().for_each(|(c, (cursor, rawrows))|{
         let mut pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
-        kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
+        merged.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
             let kmer_c = if *len as usize == k {
                 (
                     kmer
@@ -168,11 +167,10 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
 
     let lcs = if build_lcs {
         // LCS values are between 0 and k-1
-        Some(build_lcs_array(&kmers, k))
+        Some(build_lcs_array(&merged, k))
     } else {
         None
     };
 
     (rawrows, lcs)
-
 }
