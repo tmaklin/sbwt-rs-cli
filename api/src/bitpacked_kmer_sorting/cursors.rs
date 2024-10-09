@@ -1,184 +1,11 @@
-use std::io::Write;
-
 use simple_sds_sbwt::{raw_vector::AccessRaw};
 use std::cmp::min;
 use super::kmer::LongKmer;
 use crate::util::binary_search_leftmost_that_fulfills_pred;
-use crate::tempfile::TempFile;
 
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::ParallelSlice;
-
-pub struct DummyNodeMerger<R: std::io::Read, const B: usize> {
-    dummy_reader: R, // Stream of k-mer objects
-    nondummy_reader: R, // Stream of pairs (kmer, len)
-
-    dummy_kmer: Option<(LongKmer::<B>, u8)>,
-    nondummy_kmer: Option<(LongKmer::<B>, u8)>,
-
-    k: usize,
-
-    dummy_position: usize, // Position of the dummy cursor
-    nondummy_position: usize, // Position of the nondummy cursor
-}
-
-impl <R: std::io::Read, const B: usize> DummyNodeMerger<R, B> {
-
-    pub fn read_from_dummy_reader(dummy_reader: &mut R) -> Option<(LongKmer::<B>, u8)>{
-        let kmer = match LongKmer::<B>::load(dummy_reader){
-            Ok(kmer_opt) => {
-                match kmer_opt{
-                    Some(kmer) => kmer,
-                    None => return None, // End of stream
-                }   
-            },
-            Err(e) => panic!("IO error while streaming sorted k-mers: {}", e),
-        };
-
-        // Read length
-        let mut buf = [0_u8; 1];
-        dummy_reader.read_exact(&mut buf).unwrap();
-        let len = u8::from_le_bytes(buf);
-
-        Some((kmer, len))
-    }
-
-    pub fn read_from_non_dummy_reader(nondummy_reader: &mut R, k: usize) -> Option<(LongKmer::<B>, u8)>{
-        match LongKmer::<B>::load(nondummy_reader){
-            Ok(kmer_opt) => {
-                kmer_opt.map(|kmer| (kmer, k as u8))
-            },
-            Err(e) => panic!("IO error while streaming sorted k-mers: {}", e),
-        }
-    }
-
-    pub fn new(mut dummy_reader: R, mut nondummy_reader: R, k: usize) -> Self {
-        let dummy_kmer = Self::read_from_dummy_reader(&mut dummy_reader);
-        let nondummy_kmer = Self::read_from_non_dummy_reader(&mut nondummy_reader, k);
-
-        Self {
-            dummy_reader,
-            nondummy_reader,
-            dummy_kmer,
-            nondummy_kmer,
-            k,
-            dummy_position: 0,
-            nondummy_position: 0,
-        }
-    }
-
-    pub fn new_with_initial_positions(mut dummy_reader: R, mut nondummy_reader: R, k: usize, dummy_position: usize, nondummy_position: usize) -> Self {
-        let dummy_kmer = Self::read_from_dummy_reader(&mut dummy_reader);
-        let nondummy_kmer = Self::read_from_non_dummy_reader(&mut nondummy_reader, k);
-
-        Self {
-            dummy_reader,
-            nondummy_reader,
-            dummy_kmer,
-            nondummy_kmer,
-            k,
-            dummy_position,
-            nondummy_position,
-        }
-    }
-
-    pub fn peek(&self) -> Option<(LongKmer::<B>, u8)>{
-        match (self.dummy_kmer, self.nondummy_kmer){
-            (None, None) => None,
-            (Some(dummy_kmer), None) => {
-                Some(dummy_kmer)
-            },
-            (None, Some(nondummy_kmer)) => {
-                Some(nondummy_kmer)
-            },
-            (Some(dummy_kmer), Some(nondummy_kmer)) => {
-                if dummy_kmer < nondummy_kmer {
-                    Some(dummy_kmer)
-                } else {
-                    Some(nondummy_kmer)
-                }
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn dummy_position(&self) -> usize{
-        self.dummy_position
-    }
-
-    #[allow(dead_code)]
-    pub fn nondummy_position(&self)  -> usize{
-        self.nondummy_position
-    }
-}
-
-impl<const B: usize> Iterator for DummyNodeMerger<&mut TempFile, B> {
-    type Item = (LongKmer<B>, u8);
-
-    // Produces pairs (kmer, length)
-    fn next(&mut self) -> Option<(LongKmer::<B>, u8)> {
-        match (self.dummy_kmer, self.nondummy_kmer){
-            (None, None) => None,
-            (Some(dummy_kmer), None) => {
-                self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
-                self.dummy_position += 1;
-                Some(dummy_kmer)
-            },
-            (None, Some(nondummy_kmer)) => {
-                self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
-                self.nondummy_position += 1;
-                Some(nondummy_kmer)
-            },
-            (Some(dummy_kmer), Some(nondummy_kmer)) => {
-                if dummy_kmer < nondummy_kmer {
-                    self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
-                    self.dummy_position += 1;
-                    Some(dummy_kmer)
-                } else {
-                    self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
-                    self.nondummy_position += 1;
-                    Some(nondummy_kmer)
-                }
-            }
-        }
-    }
-
-}
-
-
-impl<const B: usize> Iterator for DummyNodeMerger<std::io::Cursor<Vec<u8>>, B> {
-    type Item = (LongKmer<B>, u8);
-
-    // Produces pairs (kmer, length)
-    fn next(&mut self) -> Option<(LongKmer::<B>, u8)> {
-        match (self.dummy_kmer, self.nondummy_kmer){
-            (None, None) => None,
-            (Some(dummy_kmer), None) => {
-                self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
-                self.dummy_position += 1;
-                Some(dummy_kmer)
-            },
-            (None, Some(nondummy_kmer)) => {
-                self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
-                self.nondummy_position += 1;
-                Some(nondummy_kmer)
-            },
-            (Some(dummy_kmer), Some(nondummy_kmer)) => {
-                if dummy_kmer < nondummy_kmer {
-                    self.dummy_kmer = Self::read_from_dummy_reader(&mut self.dummy_reader);
-                    self.dummy_position += 1;
-                    Some(dummy_kmer)
-                } else {
-                    self.nondummy_kmer = Self::read_from_non_dummy_reader(&mut self.nondummy_reader, self.k);
-                    self.nondummy_position += 1;
-                    Some(nondummy_kmer)
-                }
-            }
-        }
-    }
-
-}
 
 pub fn find_in_dummy<const B: usize>(
     dummy_file: &std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
@@ -230,7 +57,6 @@ pub fn find_in_nondummy<const B: usize>(
 pub fn init_char_cursor_positions<const B: usize>(
     kmers: &std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
-    _k: usize,
     sigma: usize
 ) -> Vec<((u64, u64), (u64, u64))>{
     let mut char_cursor_positions = Vec::<((u64, u64), (u64, u64))>::new();
@@ -268,45 +94,36 @@ pub fn build_lcs_array<const B: usize>(
 }
 
 pub fn split_global_cursor<const B: usize>(
-    global_cursor: &mut DummyNodeMerger<&mut std::io::Cursor<Vec<u8>>, B>,
+    kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
+    dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
     char_cursor_positions: &Vec<((u64, u64), (u64, u64))>,
     sigma: usize,
-    k: usize,
-) -> Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>> {
-    let mut char_cursors = (0..(sigma - 1)).collect::<Vec<usize>>().into_iter().map(|c|{
-        DummyNodeMerger::new_with_initial_positions(
-            std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.dummy_reader.get_ref()
-                    [(char_cursor_positions[c as usize].0.0 as usize)..(char_cursor_positions[c + 1 as usize].0.0 as usize)].to_vec()
-            ),
-            std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.nondummy_reader.get_ref()
-                    [(char_cursor_positions[c as usize].1.0 as usize)..(char_cursor_positions[c + 1 as usize].1.0 as usize)].to_vec()
-            ),
-            k,
-            char_cursor_positions[c as usize].0.1 as usize,
-            char_cursor_positions[c as usize].1.1 as usize,
-        )
-    }).collect::<Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>>>();
+) -> Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)> {
+
+    let mut char_cursors = (0..(sigma - 1)).map(|c|{
+        (std::io::Cursor::new(Vec::from(
+            dummies.get_ref()
+                [(char_cursor_positions[c as usize].0.0 as usize)..(char_cursor_positions[c + 1 as usize].0.0 as usize)].to_vec()
+        )),
+        std::io::Cursor::new(Vec::from(
+            kmers.get_ref()
+                [(char_cursor_positions[c as usize].1.0 as usize)..(char_cursor_positions[c + 1 as usize].1.0 as usize)].to_vec()
+        )))
+    }).collect::<Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)>>();
     char_cursors.push(
-        DummyNodeMerger::new_with_initial_positions(
-            std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.dummy_reader.get_ref()
-                    [(char_cursor_positions[sigma - 1 as usize].0.0 as usize)..(global_cursor.dummy_reader.get_ref().len())].to_vec()
-            ),
-            std::io::Cursor::<Vec<u8>>::new(
-                global_cursor.nondummy_reader.get_ref()
-                    [(char_cursor_positions[sigma - 1 as usize].1.0 as usize)..(global_cursor.nondummy_reader.get_ref().len())].to_vec()
-            ),
-            k,
-            char_cursor_positions[sigma - 1 as usize].0.1 as usize,
-            char_cursor_positions[sigma - 1 as usize].1.1 as usize,
-        )
-    );
+        (std::io::Cursor::new(Vec::from(
+            dummies.get_ref()
+                [(char_cursor_positions[sigma - 1 as usize].0.0 as usize)..(dummies.get_ref().len())].to_vec()
+        )),
+        std::io::Cursor::new(Vec::from(
+            kmers.get_ref()
+                [(char_cursor_positions[sigma - 1 as usize].1.0 as usize)..(kmers.get_ref().len())].to_vec()
+        ))));
+
     char_cursors
 }
 
-pub fn read_kmers<const B: usize>(
+pub fn read_kmer_or_dummy<const B: usize>(
     kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
     k: usize,
@@ -342,40 +159,20 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
     n: usize,
     k: usize, 
     sigma: usize,
-    build_lcs: bool) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>)
-{
-
-    let mut serialized_kmers = std::io::Cursor::new(Vec::new());
-    kmers_file.get_ref().iter().for_each(|kmer| {
-        kmer.serialize(&mut serialized_kmers).expect("Serialized kmer to TempFile");
-    });
-
-    let mut serialized_dummies = std::io::Cursor::new(Vec::new());
-    required_dummies.get_ref().iter().for_each(|(kmer, len)| {
-        kmer.serialize(&mut serialized_dummies).expect("Serialized kmer to TempFile");
-        serialized_dummies.write_all(&[*len]).unwrap();
-    });
+    build_lcs: bool) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>
+) {
 
     let mut kmers: Vec<(LongKmer::<B>, u8)> = Vec::with_capacity(kmers_file.get_ref().len() + required_dummies.get_ref().len());
-    while let Some(kmer) = read_kmers(kmers_file, required_dummies, k) {
+    while let Some(kmer) = read_kmer_or_dummy(kmers_file, required_dummies, k) {
         kmers.push(kmer);
     }
 
-    let mut global_cursor = DummyNodeMerger::new(
-        &mut serialized_dummies,
-        &mut serialized_kmers,
-        k,
-    );
-
-    let mut char_cursor_positions = init_char_cursor_positions::<B>(kmers_file, required_dummies, k, sigma);
-    for c in 0..sigma {
-        char_cursor_positions[c].0.0 *= LongKmer::<B>::byte_size() as u64 + 1;
-        char_cursor_positions[c].1.0 *= LongKmer::<B>::byte_size() as u64;
-    }
+    let char_cursor_positions = init_char_cursor_positions::<B>(kmers_file, required_dummies, sigma);
 
     let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
-    let mut char_cursors = split_global_cursor(&mut global_cursor, &char_cursor_positions, sigma, k);
+    let mut char_cursors = split_global_cursor(kmers_file, required_dummies, &char_cursor_positions, sigma);
     char_cursors.iter_mut().zip(rawrows.iter_mut()).enumerate().par_bridge().for_each(|(c, (cursor, rawrows))|{
+        let mut pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
         kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
             let kmer_c = if *len as usize == k {
                 (
@@ -389,13 +186,13 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
                 (kmer.right_shift(1).set_from_left(0, c as u8), len + 1) // Dummy
             };
 
-            while cursor.peek().is_some() && cursor.peek().unwrap() < kmer_c {
-                cursor.next();
+            while pointed_kmer.is_some() && pointed_kmer.unwrap() < kmer_c {
+                pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
             }
 
-            if cursor.peek().is_some() && cursor.peek().unwrap() == kmer_c {
+            if pointed_kmer.is_some() && pointed_kmer.unwrap() == kmer_c {
                 rawrows.set_bit(kmer_idx, true);
-                cursor.next();
+                pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
             }
         });
     });
@@ -410,54 +207,3 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
     (rawrows, lcs)
 
 }
-
-// #[cfg(test)]
-// mod tests{
-
-//     use std::io::Write;
-
-//     use super::*;
-
-//     #[test]
-//     fn test_init_char_cursors(){
-//         let nondummies = [
-//             LongKmer::<2>::from_ascii(b"ACGT").unwrap(),
-//             LongKmer::<2>::from_ascii(b"AGGT").unwrap(),
-//             LongKmer::<2>::from_ascii(b"GGAA").unwrap(),
-//             LongKmer::<2>::from_ascii(b"GGGT").unwrap()
-//         ];
-//         let dummies = [
-//             (LongKmer::<2>::from_ascii(b"AAAA").unwrap(),0), // This is actually the empty dummy so it's not in the A-block
-//             (LongKmer::<2>::from_ascii(b"AAAA").unwrap(),1),
-//             (LongKmer::<2>::from_ascii(b"ACAA").unwrap(),2),
-//             (LongKmer::<2>::from_ascii(b"ACAA").unwrap(),3),
-//             (LongKmer::<2>::from_ascii(b"GGTT").unwrap(),3),
-//         ];
-
-//         let mut temp_file_manager = crate::tempfile::TempFileManager::new();
-
-//         let mut nondummy_file = temp_file_manager.create_new_file("test-", 10, ".nondummy");
-//         let mut dummy_file = temp_file_manager.create_new_file("test-", 10, ".dummy");
-
-//         for kmer in nondummies.iter(){
-//             kmer.serialize(&mut nondummy_file).unwrap();
-//         }
-//         for (kmer, len) in dummies.iter(){
-//             kmer.serialize(&mut dummy_file).unwrap();
-//             let len_byte = *len as u8;
-//             dummy_file.write_all(&[len_byte]).unwrap();
-//         }
-
-//         // Flush
-//         dummy_file.flush().unwrap();
-//         nondummy_file.flush().unwrap();
-
-//         let char_cursors = init_char_cursors(&mut dummy_file, &mut nondummy_file, 4, 4);
-
-//         assert_eq!(char_cursors[0].peek(), Some((LongKmer::<2>::from_ascii(b"AAAA").unwrap(), 1))); // A
-//         assert_eq!(char_cursors[1].peek(), Some((LongKmer::<2>::from_ascii(b"GGAA").unwrap(), 4))); // C
-//         assert_eq!(char_cursors[2].peek(), Some((LongKmer::<2>::from_ascii(b"GGAA").unwrap(), 4))); // G
-//         assert_eq!(char_cursors[3].peek(), None); // T
-
-//     }
-// }
