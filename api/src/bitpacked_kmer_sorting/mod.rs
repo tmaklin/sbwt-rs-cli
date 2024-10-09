@@ -25,13 +25,13 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
     let n_kmers = kmers_file.get_ref().len();
 
     log::info!("{} distinct k-mers found", n_kmers);
-    let required_dummies = dummies::get_sorted_dummies::<B>(&mut kmers_file, sigma, k, temp_file_manager);
+    let mut required_dummies = dummies::get_sorted_dummies::<B>(&mut kmers_file, sigma, k, temp_file_manager);
 
     let n = n_kmers + required_dummies.get_ref().len();
 
     log::info!("Constructing the sbwt subset sequence");
 
-    let (rawrows, lcs) = cursors::build_sbwt_bit_vectors::<B>(&kmers_file, &required_dummies, n, k, sigma, build_lcs);
+    let (rawrows, lcs) = cursors::build_sbwt_bit_vectors::<B>(&mut kmers_file, &mut required_dummies, n, k, sigma, build_lcs);
 
     // Create the C array
     #[allow(non_snake_case)] // C-array is an established convention in BWT indexes
