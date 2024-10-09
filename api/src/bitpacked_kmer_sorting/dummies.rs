@@ -1,8 +1,5 @@
-use std::io::{BufWriter, Write};
-
 use super::kmer::LongKmer;
 use crate::tempfile::TempFileManager;
-use crate::tempfile::TempFile;
 use simple_sds_sbwt::ops::Select;
 use simple_sds_sbwt::ops::SelectZero;
 use simple_sds_sbwt::bit_vector::BitVector;
@@ -111,13 +108,4 @@ pub fn get_sorted_dummies<const B: usize>(
 
     let dummy_file: std::io::Cursor::<Vec<(LongKmer::<B>, u8)>> = std::io::Cursor::new(Vec::from(required_dummies));
     dummy_file
-}
-
-pub fn write_to_disk<const B: usize>(dummies: Vec<(LongKmer::<B>, u8)>, writer: &mut TempFile){
-    let mut bw = BufWriter::new(writer);
-    for (kmer, len) in dummies.iter(){
-        kmer.serialize(&mut bw).unwrap();
-        bw.write_all(&[*len]).unwrap();
-    }
-    bw.flush().unwrap();
 }

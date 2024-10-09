@@ -5,11 +5,8 @@ mod kmer_splitter;
 mod cursors;
 mod kmer;
 
-use std::io::Write;
-
 use crate::{sbwt::{PrefixLookupTable, SbwtIndex}, streaming_index::LcsArray, subsetseq::SubsetSeq, tempfile::TempFileManager, util::DNA_ALPHABET};
 use crate::bitpacked_kmer_sorting::kmer_splitter::concat_files_take;
-use crate::tempfile::TempFile;
 
 /// Build using bitpacked k-mer sorting. See [SbwtIndexBuilder](crate::builder::SbwtIndexBuilder) for a wrapper with a more 
 /// user-friendly interface. B is the number u64 words in a k-mer.
@@ -34,25 +31,7 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
 
     log::info!("Constructing the sbwt subset sequence");
 
-    let mut serialized_kmers = TempFile{ file: std::io::Cursor::new(Vec::new()) };
-    kmers_file.get_ref().iter().for_each(|kmer| {
-        kmer.serialize(&mut serialized_kmers).expect("Serialized kmer to TempFile");
-    });
-    serialized_kmers.file.set_position(0);
-
-    let mut serialized_dummies = TempFile{ file: std::io::Cursor::new(Vec::new()) };
-    required_dummies.get_ref().iter().for_each(|(kmer, len)| {
-        kmer.serialize(&mut serialized_dummies).expect("Serialized kmer to TempFile");
-        serialized_dummies.write_all(&[*len]).unwrap();
-    });
-    serialized_kmers.file.set_position(0);
-
-    let char_cursors = cursors::init_char_cursor_positions::<B>(&mut serialized_dummies, &mut serialized_kmers, k, sigma);
-
-    serialized_kmers.file.set_position(0);
-    serialized_dummies.file.set_position(0);
-
-    let (rawrows, lcs) = cursors::build_sbwt_bit_vectors::<B>(&mut serialized_kmers.file, &mut serialized_dummies.file, &char_cursors, n, k, sigma, build_lcs);
+    let (rawrows, lcs) = cursors::build_sbwt_bit_vectors::<B>(&kmers_file, &required_dummies, n, k, sigma, build_lcs);
 
     // Create the C array
     #[allow(non_snake_case)] // C-array is an established convention in BWT indexes
@@ -68,7 +47,7 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
         k,
         C,
         PrefixLookupTable::new_empty(n_sets))
-			    , lcs.map(LcsArray::new));
+                            , lcs.map(LcsArray::new));
 
     let lut = PrefixLookupTable::new(&index, 8);
     index.set_lookup_table(lut);
