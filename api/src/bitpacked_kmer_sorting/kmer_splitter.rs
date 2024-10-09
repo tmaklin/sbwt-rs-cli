@@ -1,9 +1,7 @@
 use super::kmer::*;
-use super::kmer_chunk::KmerChunk;
 use crate::tempfile::{TempFile, TempFileManager};
 use crate::util::DNA_ALPHABET;
-use std::io::{BufWriter, Seek, Write};
-use std::borrow::BorrowMut;
+use std::io::{BufWriter, Write};
 
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
@@ -26,7 +24,14 @@ fn colex_sorted_binmers(bin_prefix_len: usize) -> Vec<Vec<u8>> {
     binmers
 }
 
-pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, k: usize, _mem_gb: usize, _n_threads: usize, _dedup_batches: bool, _temp_file_manager: &mut TempFileManager) -> Vec<std::io::Cursor<Vec<u8>>>{
+pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(
+    mut seqs: IN,
+    k: usize,
+    _mem_gb: usize,
+    _n_threads: usize,
+    _dedup_batches: bool,
+    _temp_file_manager: &mut TempFileManager
+) -> Vec<std::io::Cursor::<Vec<LongKmer::<B>>>> {
 
     // Suppose we have a memory budget of m bytes and t threads.
     // Suppose each k-mer takes s bytes and there are 64 bins.
@@ -67,37 +72,16 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(mut seqs: IN, 
         let x = a.get_from_left(0) as usize * 16 + a.get_from_left(1) as usize * 4 + a.get_from_left(2) as usize;
         let y = b.get_from_left(0) as usize * 16 + b.get_from_left(1) as usize * 4 + b.get_from_left(2) as usize;
         x == y}).map(|chunk| {
-        let mut writer = std::io::Cursor::new(Vec::new());
-        chunk.iter().for_each(|kmer| {
-            kmer.serialize(&mut writer).expect("Serialized kmer to TempFile");
-        });
-        writer.set_position(0);
-        writer
-    }).collect::<Vec<std::io::Cursor<Vec<u8>>>>()
+        std::io::Cursor::<Vec<LongKmer::<B>>>::new(chunk.to_vec())
+    }).collect::<Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>>()
 }
 
 // Overwrite the files with sorted and deduplicates files. Returns back the files after overwriting.
-pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: &mut Vec<std::io::Cursor<Vec<u8>>>, _mem_gb: usize, _n_threads: usize) {
-
-    let mut files_and_sizes = bin_files.par_iter_mut().map(|f| {
-        f
-    }).collect::<Vec<&mut std::io::Cursor<Vec<u8>>>>();
-    files_and_sizes.sort_by_key(|f| f.get_ref().len());
-
+pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>, _mem_gb: usize, _n_threads: usize) {
     log::info!("Sorting k-mer bins");
-
-    files_and_sizes.par_iter_mut().for_each(|f| {
-        // Using debug log level as a more verbose info level
-        let mut reader = std::io::BufReader::new(&mut *f);
-        let chunk = KmerChunk::<B>::load(&mut reader).unwrap();
-
-        let mut chunk = chunk.sort();
-        chunk.dedup();
-
-        // Overwrite the file and seek to start
-        *f.get_mut() = Vec::new();
-        f.set_position(0);
-        chunk.serialize(&mut *f).unwrap();
+    bin_files.par_iter_mut().for_each(|f| {
+        f.get_mut().sort_unstable();
+        f.get_mut().dedup();
         f.set_position(0);
     });
 }
@@ -115,8 +99,15 @@ pub fn concat_files(infiles: Vec<TempFile>, out_writer: &mut impl std::io::Write
 }
 
 // The original files are deleted
-pub fn concat_files_take(infiles: &mut Vec<std::io::Cursor<Vec<u8>>>) -> TempFile {
-    TempFile{ file: std::io::Cursor::new(infiles.par_iter_mut().map(|x| std::mem::take(x.get_mut())).flatten().collect::<Vec<u8>>()) }
+pub fn concat_files_take<const B: usize>(infiles: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>) -> TempFile {
+    let mut writer: std::io::Cursor::<Vec<u8>> = std::io::Cursor::new(Vec::new());
+    infiles.iter().for_each(|file| {
+        file.get_ref().iter().for_each(|kmer| {
+            kmer.serialize(&mut writer).expect("Serialized kmer to TempFile");
+        })
+    });
+    writer.set_position(0);
+    TempFile{ file: writer }
 }
 
 mod tests {

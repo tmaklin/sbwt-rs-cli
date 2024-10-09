@@ -4,7 +4,6 @@ mod dummies;
 mod kmer_splitter;
 mod cursors;
 mod kmer;
-mod kmer_chunk;
 
 use std::io::Seek;
 
