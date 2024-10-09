@@ -6,6 +6,8 @@ use crate::{subsetseq::SubsetMatrix, SeqStream};
 use crate::sbwt::{PrefixLookupTable, SbwtIndex};
 use crate::streaming_index::LcsArray;
 
+use needletail::Sequence;
+
 // 'a must be a higher-ranked lifetime because it's tied to the lifetime
 // of the borrow in stream_next? That function should be callabed with
 // *any* borrow length, so that's why a regular generic lifetime parameter
@@ -34,7 +36,7 @@ impl<SS: SeqStream + Send> crate::SeqStream for SeqStreamWithRevComp<SS>{
             Some(new)
 
         } else {
-            jseqio::reverse_complement_in_place(&mut self.rc_buf);
+            self.rc_buf = self.rc_buf.reverse_complement();
             Some(&self.rc_buf)
         }
     }
@@ -219,14 +221,14 @@ impl<A: SbwtConstructionAlgorithm + Default> SbwtIndexBuilder<A> {
     /// Run the algorithm from a FASTA-formatted stream of sequences, and return the SBWT index and optionally the LCS array if [SbwtIndexBuilder::build_lcs] was set.
     pub fn run_from_fasta<R: std::io::Read + Send + 'static>(self, input: R) -> (SbwtIndex<SubsetMatrix>, Option<LcsArray>) {
         let input = std::io::BufReader::new(input);
-        let input = crate::JSeqIOSeqStreamWrapper{inner: jseqio::reader::DynamicFastXReader::new(input).unwrap()};
+        let input = crate::JSeqIOSeqStreamWrapper{inner: needletail::parse_fastx_reader(input).expect("valid path/file"), record: Vec::new() };
         self.run(input)
     } 
 
     /// Run the algorithm from a FASTQ-formatted stream of sequences, and return the SBWT index and optionally the LCS array if [SbwtIndexBuilder::build_lcs] was set.
     pub fn run_from_fastq<R: std::io::Read + Send + 'static>(self, input: R) -> (SbwtIndex<SubsetMatrix>, Option<LcsArray>) {
         let input = std::io::BufReader::new(input);
-        let input = crate::JSeqIOSeqStreamWrapper{inner: jseqio::reader::DynamicFastXReader::new(input).unwrap()};
+        let input = crate::JSeqIOSeqStreamWrapper{inner: needletail::parse_fastx_reader(input).expect("valid path/file"), record: Vec::new() };
         self.run(input)
     } 
 }

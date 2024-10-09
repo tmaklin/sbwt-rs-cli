@@ -2,6 +2,7 @@
 
 use bitvec::prelude::*;
 use simple_sds_sbwt::raw_vector::AccessRaw;
+use needletail::Sequence;
 
 // Returns the number of bytes written
 pub(crate) fn write_bytes<W: std::io::Write>(out: &mut W, bytes: &[u8]) -> std::io::Result<usize>{
@@ -64,17 +65,7 @@ pub(crate) fn get_C_array(rawrows: &[simple_sds_sbwt::raw_vector::RawVector]) ->
 
 /// Reverses the given ASCII DNA sequence and replaces each nucleotide with its complement.
 pub fn reverse_complement_in_place(seq: &mut [u8]){
-    jseqio::reverse_complement_in_place(seq);
-}
-
-pub(crate) struct FastXReader{
-    inner: jseqio::reader::DynamicFastXReader
-}
-
-impl crate::SeqStream for FastXReader{
-    fn stream_next(&mut self) -> Option<&[u8]> {
-        self.inner.read_next().unwrap().map(|x| x.seq)
-    }
+    seq.reverse_complement();
 }
 
 /// Creates a [crate::SeqStream] out of a slice of ASCII sequences.
