@@ -242,6 +242,31 @@ pub fn find_in_nondummy<const B: usize>(
 
 }
 
+pub fn find_in_nondummy2<const B: usize>(
+    nondummy_file: &mut std::io::Cursor<Vec<LongKmer<B>>>,
+    c: u8,
+) -> (u64, u64) {
+    let nondummy_file_len = nondummy_file.get_ref().len() as usize;
+
+    let access_fn = |pos| {
+        nondummy_file.set_position(pos as u64);
+        nondummy_file.get_ref()[nondummy_file.position() as usize]
+    };
+
+    let pred_fn = |kmer: LongKmer::<B>| {
+        kmer.get_from_left(0) >= c
+    };
+
+    let start = binary_search_leftmost_that_fulfills_pred_mut(
+        access_fn,
+        pred_fn,
+        nondummy_file_len);
+
+    nondummy_file.set_position(start as u64);
+    (nondummy_file.position(), start as u64)
+
+}
+
 // We take in Paths instead of a Files because we need multiple readers to the same files 
 pub fn init_char_cursor_positions<const B: usize>(dummy_file: &mut TempFile, nondummy_file: &mut TempFile, _k: usize, sigma: usize)
 -> Vec<((u64, u64), (u64, u64))>{

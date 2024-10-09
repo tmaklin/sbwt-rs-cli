@@ -11,6 +11,7 @@ use rayon::prelude::*;
 
 use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
 use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy;
+use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy2;
 
 #[allow(dead_code)]
 struct NullReader{}
