@@ -9,8 +9,6 @@ use simple_sds_sbwt::bit_vector::BitVector;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
-use crate::bitpacked_kmer_sorting::cursors::DummyNodeMerger;
-use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy;
 use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy2;
 
 #[allow(dead_code)]
@@ -23,30 +21,31 @@ impl std::io::Read for NullReader{
 }
 
 pub fn get_set_bits<const B: usize>(
-    kmers: &Vec<(LongKmer::<B>, u8)>,
-    cursor: &mut DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>,
+    kmers: &Vec<LongKmer::<B>>,
+    cursor: &mut (std::io::Cursor<Vec<LongKmer<B>>>, usize),
     k: usize,
     c: u8,
 ) -> simple_sds_sbwt::raw_vector::RawVector {
     let mut bits = simple_sds_sbwt::raw_vector::RawVector::new();
     bits.resize(kmers.len(), false);
     // let mut set_bits: Vec<usize> = Vec::new();
-    kmers.iter().for_each(|(x, _)| {
+    let mut pointed_idx = 0;
+    kmers.iter().for_each(|x| {
         let xc = x.set_from_left(k-1, 0).right_shift(1).set_from_left(0, c as u8);
 
-        while cursor.peek().is_some(){
-            match cursor.peek().unwrap().0.cmp(&xc) {
+        while pointed_idx < cursor.0.get_ref().len() {
+            match cursor.0.get_ref()[pointed_idx].cmp(&xc) {
                 std::cmp::Ordering::Greater => {
                     break
                 },
                 std::cmp::Ordering::Equal => {
                     // set_bits.push(cursor.nondummy_position());
-                    bits.set_bit(cursor.nondummy_position(), true);
-                    cursor.next(); // Advance
+                    bits.set_bit(pointed_idx + cursor.1, true);
+                    pointed_idx += 1; // Advance
                     break
                 },
                 std::cmp::Ordering::Less => {
-                    cursor.next(); // Advance
+                    pointed_idx += 1; // Advance
                     // no break
                 }
             }
@@ -57,39 +56,31 @@ pub fn get_set_bits<const B: usize>(
 
 // We take in a path and not a file object because we need multiple readers to the same file
 pub fn get_sorted_dummies<const B: usize>(
-    sorted_kmers: &mut TempFile,
+    sorted_kmers: &mut std::io::Cursor::<Vec<LongKmer::<B>>>,
     sigma: usize, k: usize,
     _temp_file_manager: &mut TempFileManager
 ) -> Vec<(LongKmer::<B>, u8)>{
     // Number of k-mers in file
-    let n = sorted_kmers.avail_in() as usize / LongKmer::<B>::byte_size();
-    let xs = sorted_kmers.file.get_mut().par_chunks(LongKmer::<B>::byte_size()).map(|mut bytes| {
-        (LongKmer::<B>::load(&mut bytes).expect("Valid k-mer").unwrap(), 0 as u8)
-    }).collect::<Vec<(LongKmer::<B>, u8)>>();
+    let n = sorted_kmers.get_ref().len();
 
     // Iterate in reverse bc moving data from the beginning of sorted_kmers is slow
     let mut char_cursors = (0..sigma).rev().map(|c|{
-        let pos = find_in_nondummy::<B>(sorted_kmers, c as u8);
+        let pos = find_in_nondummy2::<B>(sorted_kmers, c as u8);
         let start = pos.0 as usize;
         let end = if c < sigma - 1 {
-            find_in_nondummy::<B>(sorted_kmers, c as u8 + 1).0
+            find_in_nondummy2::<B>(sorted_kmers, c as u8 + 1).0
         } else {
-            sorted_kmers.file.get_ref().len() as u64
+            sorted_kmers.get_ref().len() as u64
         };
-        DummyNodeMerger::new_with_initial_positions(
-            std::io::Cursor::<Vec<u8>>::new(Vec::with_capacity(0)),
-            std::io::Cursor::<Vec<u8>>::new(Vec::from(std::mem::take(
-                &mut sorted_kmers.file.get_ref()
+        (std::io::Cursor::<Vec<LongKmer::<B>>>::new(Vec::from(std::mem::take(
+            &mut sorted_kmers.get_ref()
                     [start..(end as usize)].to_vec()
-            ))),
-            k,
-            0,
-            pos.1 as usize,
-        )
-    }).rev().collect::<Vec<DummyNodeMerger<std::io::Cursor::<Vec<u8>>, B>>>();
+        ))),
+        pos.1 as usize)
+    }).rev().collect::<Vec<(std::io::Cursor::<Vec<LongKmer::<B>>>, usize)>>();
 
     let has_predecessor = char_cursors.par_iter_mut().enumerate().map(|(c, cursor)| {
-        get_set_bits(&xs, cursor, k, c as u8)
+        get_set_bits(sorted_kmers.get_ref(), cursor, k, c as u8)
     }).reduce(|| {
         let mut res = simple_sds_sbwt::raw_vector::RawVector::new();
         res.resize(n, false);
@@ -102,7 +93,7 @@ pub fn get_sorted_dummies<const B: usize>(
 
     let iterable = BitVector::from(has_predecessor);
     let mut required_dummies: Vec::<(LongKmer::<B>, u8)> = iterable.zero_iter().par_bridge().map(|x| {
-        let mut prefix = xs[x.1].0;
+        let mut prefix = sorted_kmers.get_ref()[x.1];
         (0..k).collect::<Vec<usize>>().iter().map(|i| {
             let len = k - i - 1;
             prefix = prefix.left_shift(1);

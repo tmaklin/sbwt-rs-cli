@@ -99,15 +99,14 @@ pub fn concat_files(infiles: Vec<TempFile>, out_writer: &mut impl std::io::Write
 }
 
 // The original files are deleted
-pub fn concat_files_take<const B: usize>(infiles: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>) -> TempFile {
-    let mut writer: std::io::Cursor::<Vec<u8>> = std::io::Cursor::new(Vec::new());
-    infiles.iter().for_each(|file| {
-        file.get_ref().iter().for_each(|kmer| {
-            kmer.serialize(&mut writer).expect("Serialized kmer to TempFile");
-        })
-    });
-    writer.set_position(0);
-    TempFile{ file: writer }
+pub fn concat_files_take<const B: usize>(infiles: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>) -> std::io::Cursor::<Vec<LongKmer::<B>>> {
+    let concat_kmers = infiles.par_iter().map(|file| {
+
+        // TODO should move here
+
+        file.get_ref().clone()
+    }).flatten().collect::<Vec<LongKmer::<B>>>();
+    std::io::Cursor::<Vec<LongKmer::<B>>>::new(Vec::from(concat_kmers))
 }
 
 mod tests {

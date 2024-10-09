@@ -9,6 +9,7 @@ use std::io::Seek;
 
 use crate::{sbwt::{PrefixLookupTable, SbwtIndex}, streaming_index::LcsArray, subsetseq::SubsetSeq, tempfile::TempFileManager, util::DNA_ALPHABET};
 use crate::bitpacked_kmer_sorting::kmer_splitter::concat_files_take;
+use crate::tempfile::TempFile;
 
 /// Build using bitpacked k-mer sorting. See [SbwtIndexBuilder](crate::builder::SbwtIndexBuilder) for a wrapper with a more 
 /// user-friendly interface. B is the number u64 words in a k-mer.
@@ -24,7 +25,7 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
 
     let mut kmers_file = concat_files_take(&mut bin_files);
 
-    let n_kmers = kmers_file.avail_in() / kmer::LongKmer::<B>::byte_size();
+    let n_kmers = kmers_file.get_ref().len();
 
     log::info!("{} distinct k-mers found", n_kmers);
     let required_dummies = dummies::get_sorted_dummies::<B>(&mut kmers_file, sigma, k, temp_file_manager);
@@ -37,14 +38,22 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
     
     log::info!("Constructing the sbwt subset sequence");
 
-    let char_cursors = cursors::init_char_cursor_positions::<B>(&mut dummy_file, &mut kmers_file, k, sigma);
+    // TODO remove this temp serialization
+
+    let mut serialized_kmers = TempFile{ file: std::io::Cursor::new(Vec::new()) };
+    kmers_file.get_ref().iter().for_each(|kmer| {
+        kmer.serialize(&mut serialized_kmers).expect("Serialized kmer to TempFile");
+    });
+    serialized_kmers.file.set_position(0);
+
+    let char_cursors = cursors::init_char_cursor_positions::<B>(&mut dummy_file, &mut serialized_kmers, k, sigma);
 
     dummy_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
-    kmers_file.file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    serialized_kmers.file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
     let global_cursor = cursors::DummyNodeMerger::new(
         &mut dummy_file,
-        &mut kmers_file,
+        &mut serialized_kmers,
         k,
     );
 
