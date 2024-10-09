@@ -6,7 +6,7 @@ use simple_sds_sbwt::bit_vector::BitVector;
 use simple_sds_sbwt::raw_vector::*;
 use rayon::prelude::*;
 
-use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy2;
+use crate::bitpacked_kmer_sorting::cursors::find_in_nondummy;
 
 #[allow(dead_code)]
 struct NullReader{}
@@ -62,10 +62,10 @@ pub fn get_sorted_dummies<const B: usize>(
 
     // Iterate in reverse bc moving data from the beginning of sorted_kmers is slow
     let mut char_cursors = (0..sigma).rev().map(|c|{
-        let pos = find_in_nondummy2::<B>(sorted_kmers, c as u8);
+        let pos = find_in_nondummy::<B>(sorted_kmers, c as u8);
         let start = pos.0 as usize;
         let end = if c < sigma - 1 {
-            find_in_nondummy2::<B>(sorted_kmers, c as u8 + 1).0
+            find_in_nondummy::<B>(sorted_kmers, c as u8 + 1).0
         } else {
             sorted_kmers.get_ref().len() as u64
         };
