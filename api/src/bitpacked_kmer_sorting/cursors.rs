@@ -3,7 +3,7 @@ use std::cmp::min;
 use super::kmer::LongKmer;
 use crate::util::binary_search_leftmost_that_fulfills_pred;
 
-use rayon::iter::ParallelBridge;
+use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::ParallelSlice;
 
@@ -72,27 +72,7 @@ pub fn build_lcs_array<const B: usize>(
     }).collect::<Vec<usize>>().into_iter()).collect::<simple_sds_sbwt::int_vector::IntVector>()
 }
 
-pub fn split_global_cursor<const B: usize>(
-    kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
-    dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
-    sigma: u8,
-) -> Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)> {
-    (0..sigma).map(|c|{
-        let dummies_start = find_in_dummy::<B>(dummies, c) as usize;
-        let kmers_start = find_in_nondummy::<B>(kmers, c) as usize;
-        let dummies_end = if c == sigma - 1 { dummies.get_ref().len() } else { find_in_dummy::<B>(dummies, c + 1) as usize };
-        let kmers_end = if c == sigma - 1 { kmers.get_ref().len() } else { find_in_nondummy::<B>(kmers, c + 1) as usize };
-        (std::io::Cursor::new(Vec::from(
-            dummies.get_ref()
-                [dummies_start..dummies_end].to_vec()
-        )),
-        std::io::Cursor::new(Vec::from(
-            kmers.get_ref()
-                [kmers_start..kmers_end].to_vec()
-        )))
-    }).collect::<Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)>>()
-}
-
+// Read the next kmer or dummy from data stored separately in memory
 pub fn read_kmer_or_dummy<const B: usize>(
     kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
@@ -132,16 +112,16 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
     build_lcs: bool,
 ) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>) {
 
-    let mut merged: Vec<(LongKmer::<B>, u8)> = Vec::with_capacity(n);
-    while let Some(kmer) = read_kmer_or_dummy(kmers, dummies, k) {
-        merged.push(kmer);
-    }
+    let merged = std::io::Cursor::new(Vec::from((0..n).map(|_| {
+        read_kmer_or_dummy(kmers, dummies, k).unwrap()
+    }).collect::<Vec<(LongKmer::<B>, u8)>>()));
 
-    let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
-    let mut char_cursors = split_global_cursor(kmers, dummies, sigma as u8);
-    char_cursors.iter_mut().zip(rawrows.iter_mut()).enumerate().par_bridge().for_each(|(c, (cursor, rawrows))|{
-        let mut pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
-        merged.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
+    let rawrows = (0..sigma).collect::<Vec<usize>>().into_par_iter().map(|c|{
+        let mut rawrow = simple_sds_sbwt::raw_vector::RawVector::with_len(n, false);
+        let mut pointed_idx = find_in_dummy(&merged, c as u8) as usize;
+        let end = if c < sigma - 1 { find_in_dummy(&merged, c as u8 + 1) as usize } else { n };
+
+        merged.get_ref().iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
             let kmer_c = if *len as usize == k {
                 (
                     kmer
@@ -154,20 +134,21 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
                 (kmer.right_shift(1).set_from_left(0, c as u8), len + 1) // Dummy
             };
 
-            while pointed_kmer.is_some() && pointed_kmer.unwrap() < kmer_c {
-                pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
+            while pointed_idx < end && merged.get_ref()[pointed_idx] < kmer_c {
+                pointed_idx += 1;
             }
 
-            if pointed_kmer.is_some() && pointed_kmer.unwrap() == kmer_c {
-                rawrows.set_bit(kmer_idx, true);
-                pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
+            if pointed_idx < end && merged.get_ref()[pointed_idx] == kmer_c {
+                rawrow.set_bit(kmer_idx, true);
+                pointed_idx += 1;
             }
         });
-    });
+        rawrow
+    }).collect::<Vec<simple_sds_sbwt::raw_vector::RawVector>>();
 
     let lcs = if build_lcs {
         // LCS values are between 0 and k-1
-        Some(build_lcs_array(&merged, k))
+        Some(build_lcs_array(merged.get_ref(), k))
     } else {
         None
     };
