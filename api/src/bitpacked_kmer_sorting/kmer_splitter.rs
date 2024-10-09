@@ -65,11 +65,7 @@ pub fn par_sort_and_dedup_bin_files<const B: usize>(
 pub fn concat_files<const B: usize>(
     binned_kmers: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>
 ) -> std::io::Cursor::<Vec<LongKmer::<B>>> {
-    let concat_kmers = binned_kmers.par_iter().map(|file| {
-
-        // TODO should move here
-
-        file.get_ref().clone()
-    }).flatten().collect::<Vec<LongKmer::<B>>>();
+    let mut concat_kmers: Vec<LongKmer::<B>> = Vec::new();
+    binned_kmers.iter_mut().for_each(|file| concat_kmers.append(file.get_mut()));
     std::io::Cursor::<Vec<LongKmer::<B>>>::new(Vec::from(concat_kmers))
 }
