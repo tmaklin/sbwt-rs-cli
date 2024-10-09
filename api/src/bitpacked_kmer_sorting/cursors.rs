@@ -53,26 +53,6 @@ pub fn find_in_nondummy<const B: usize>(
 
 }
 
-// We take in Paths instead of a Files because we need multiple readers to the same files 
-pub fn init_char_cursor_positions<const B: usize>(
-    kmers: &std::io::Cursor<Vec<LongKmer<B>>>,
-    dummies: &std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
-    sigma: usize
-) -> Vec<(u64, u64)>{
-    let mut char_cursor_positions = Vec::<(u64, u64)>::new();
-    for c in 0..(sigma as u8){
-        log::trace!("Searching character {}", c);
-
-        let dummy_reader_pos = find_in_dummy::<B>(dummies, c);
-        let nondummy_reader_pos = find_in_nondummy::<B>(kmers, c);
-
-        let cursor = (dummy_reader_pos, nondummy_reader_pos);
-        char_cursor_positions.push(cursor);
-    }
-
-    char_cursor_positions
-}
-
 // Returns the LCS array
 pub fn build_lcs_array<const B: usize>(
     kmers: &Vec<(LongKmer::<B>, u8)>,
@@ -96,14 +76,13 @@ pub fn build_lcs_array<const B: usize>(
 pub fn split_global_cursor<const B: usize>(
     kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
-    char_cursor_positions: &Vec<(u64, u64)>,
-    sigma: usize,
+    sigma: u8,
 ) -> Vec<(std::io::Cursor<Vec<(LongKmer<B>, u8)>>, std::io::Cursor<Vec<LongKmer<B>>>)> {
     (0..sigma).map(|c|{
-        let dummies_start = char_cursor_positions[c].0 as usize;
-        let kmers_start = char_cursor_positions[c].1 as usize;
-        let dummies_end = if c == sigma - 1 { dummies.get_ref().len() } else { char_cursor_positions[c + 1].0 as usize };
-        let kmers_end = if c == sigma - 1 { kmers.get_ref().len() } else { char_cursor_positions[c + 1].1 as usize };
+        let dummies_start = find_in_dummy::<B>(dummies, c) as usize;
+        let kmers_start = find_in_nondummy::<B>(kmers, c) as usize;
+        let dummies_end = if c == sigma - 1 { dummies.get_ref().len() } else { find_in_dummy::<B>(dummies, c + 1) as usize };
+        let kmers_end = if c == sigma - 1 { kmers.get_ref().len() } else { find_in_nondummy::<B>(kmers, c + 1) as usize };
         (std::io::Cursor::new(Vec::from(
             dummies.get_ref()
                 [dummies_start..dummies_end].to_vec()
@@ -159,10 +138,8 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
         kmers.push(kmer);
     }
 
-    let char_cursor_positions = init_char_cursor_positions::<B>(kmers_file, required_dummies, sigma);
-
     let mut rawrows = vec![simple_sds_sbwt::raw_vector::RawVector::with_len(n, false); sigma];
-    let mut char_cursors = split_global_cursor(kmers_file, required_dummies, &char_cursor_positions, sigma);
+    let mut char_cursors = split_global_cursor(kmers_file, required_dummies, sigma as u8);
     char_cursors.iter_mut().zip(rawrows.iter_mut()).enumerate().par_bridge().for_each(|(c, (cursor, rawrows))|{
         let mut pointed_kmer = read_kmer_or_dummy(&mut cursor.1, &mut cursor.0, k);
         kmers.iter().enumerate().for_each(|(kmer_idx, (kmer, len))| {
