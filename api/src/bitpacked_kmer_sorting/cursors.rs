@@ -100,19 +100,29 @@ pub fn read_kmer_or_dummy<const B: usize>(
     }
 }
 
-// Returns the SBWT bit vectors and optionally the LCS array
-pub fn build_sbwt_bit_vectors<const B: usize>(
+
+pub fn merge_kmers_and_dummies<const B: usize>(
     kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
-    n: usize,
-    k: usize, 
+    k: usize,
+) -> std::io::Cursor<Vec<(LongKmer<B>, u8)>> {
+
+    let n_merged = kmers.get_ref().len() + dummies.get_ref().len();
+
+    std::io::Cursor::new(Vec::from((0..n_merged).map(|_| {
+        read_kmer_or_dummy(kmers, dummies, k)
+    }).collect::<Vec<(LongKmer::<B>, u8)>>()))
+}
+
+// Returns the SBWT bit vectors and optionally the LCS array
+pub fn build_sbwt_bit_vectors<const B: usize>(
+    merged: &std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
+    k: usize,
     sigma: usize,
     build_lcs: bool,
 ) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>) {
 
-    let merged = std::io::Cursor::new(Vec::from((0..n).map(|_| {
-        read_kmer_or_dummy(kmers, dummies, k)
-    }).collect::<Vec<(LongKmer::<B>, u8)>>()));
+    let n = merged.get_ref().len();
 
     let rawrows = (0..sigma).collect::<Vec<usize>>().into_par_iter().map(|c|{
         let mut rawrow = simple_sds_sbwt::raw_vector::RawVector::with_len(n, false);
