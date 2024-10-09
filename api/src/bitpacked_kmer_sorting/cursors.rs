@@ -132,7 +132,7 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
     build_lcs: bool,
 ) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>) {
 
-    let mut merged: Vec<(LongKmer::<B>, u8)> = Vec::with_capacity(kmers.get_ref().len() + dummies.get_ref().len());
+    let mut merged: Vec<(LongKmer::<B>, u8)> = Vec::with_capacity(n);
     while let Some(kmer) = read_kmer_or_dummy(kmers, dummies, k) {
         merged.push(kmer);
     }
