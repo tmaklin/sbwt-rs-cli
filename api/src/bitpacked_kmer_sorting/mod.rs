@@ -6,7 +6,7 @@ mod cursors;
 mod kmer;
 
 use crate::{sbwt::{PrefixLookupTable, SbwtIndex}, streaming_index::LcsArray, subsetseq::SubsetSeq, tempfile::TempFileManager, util::DNA_ALPHABET};
-use crate::bitpacked_kmer_sorting::kmer_splitter::concat_files_take;
+use crate::bitpacked_kmer_sorting::kmer_splitter::concat_files;
 
 /// Build using bitpacked k-mer sorting. See [SbwtIndexBuilder](crate::builder::SbwtIndexBuilder) for a wrapper with a more 
 /// user-friendly interface. B is the number u64 words in a k-mer.
@@ -15,12 +15,12 @@ pub fn build_with_bitpacked_kmer_sorting<const B: usize, IN: crate::SeqStream + 
     let sigma = DNA_ALPHABET.len();
 
     log::info!("Splitting k-mers into bins");
-    let mut bin_files = kmer_splitter::split_to_bins::<B, IN>(seqs, k, mem_gb, n_threads, dedup_batches, temp_file_manager);
+    let mut bin_files = kmer_splitter::split_to_bins::<B, IN>(seqs, k, dedup_batches);
 
     log::info!("Sorting and deduplicating bins");
-    kmer_splitter::par_sort_and_dedup_bin_files::<B>(&mut bin_files, mem_gb, n_threads);
+    kmer_splitter::par_sort_and_dedup_bin_files::<B>(&mut bin_files);
 
-    let mut kmers_file = concat_files_take(&mut bin_files);
+    let mut kmers_file = concat_files(&mut bin_files);
 
     let n_kmers = kmers_file.get_ref().len();
 

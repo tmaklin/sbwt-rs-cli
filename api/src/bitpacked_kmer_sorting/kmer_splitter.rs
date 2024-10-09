@@ -1,7 +1,4 @@
 use super::kmer::*;
-use crate::tempfile::{TempFile, TempFileManager};
-use crate::util::DNA_ALPHABET;
-use std::io::{BufWriter, Write};
 
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
@@ -9,47 +6,17 @@ use rayon::iter::ParallelIterator;
 use rayon::prelude::ParallelSliceMut;
 use rayon::prelude::ParallelSlice;
 
-#[allow(dead_code)]
-fn colex_sorted_binmers(bin_prefix_len: usize) -> Vec<Vec<u8>> {
-    let mut binmers = Vec::<Vec<u8>>::new();
-    for i in 0..(4_usize.pow(bin_prefix_len as u32)){
-        let mut binmer = Vec::<u8>::new();
-        let mut j = i;
-        for _ in 0..bin_prefix_len{
-            binmer.push(DNA_ALPHABET[j % 4]);
-            j /= 4;
-        }
-        binmers.push(binmer);
-    }
-    binmers
-}
-
 pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(
     mut seqs: IN,
     k: usize,
-    _mem_gb: usize,
-    _n_threads: usize,
-    _dedup_batches: bool,
-    _temp_file_manager: &mut TempFileManager
+    dedup_batches: bool,
 ) -> Vec<std::io::Cursor::<Vec<LongKmer::<B>>>> {
 
-    // Suppose we have a memory budget of m bytes and t threads.
-    // Suppose each k-mer takes s bytes and there are 64 bins.
-    // Let b be the number of k-mers in each splitter thread bin buffer.
-    // A splitter thread uses 64bs bytes
-    // In total the splitter threads use 64bst threads.
-    // So, we need:
-    // 64bbt = m
-    // b = m / (64bt)
-
-    // Wrap to scope to be able to borrow seqs for the producer thread even when it's not 'static.
-    let bin_prefix_len = 3_usize; // If you update this you must update all the logic below
-    let n_bins = (4_usize).pow(bin_prefix_len as u32); // 64
-
-    log::info!("Splitting k-mers into {} bins", n_bins);
-
-    // This function has some weird implicit assumptions that break something if
-    // the operations are done in another order??
+    // Beware: changing the number of bins, or their order, messes up the
+    // results and may not always break all tests.
+    //
+    // This function makes weird implicit assumptions that are violated if the
+    // operations are performed differently?
 
     let mut buf = Vec::<Box<[u8]>>::new();
     while let Some(seq) = seqs.stream_next() {
@@ -72,48 +39,37 @@ pub fn split_to_bins<const B: usize, IN: crate::SeqStream + Send>(
         let x = a.get_from_left(0) as usize * 16 + a.get_from_left(1) as usize * 4 + a.get_from_left(2) as usize;
         let y = b.get_from_left(0) as usize * 16 + b.get_from_left(1) as usize * 4 + b.get_from_left(2) as usize;
         x == y}).map(|chunk| {
-        std::io::Cursor::<Vec<LongKmer::<B>>>::new(chunk.to_vec())
+        if dedup_batches {
+            let mut dd_chunk = chunk.to_vec();
+            dd_chunk.sort_unstable();
+            dd_chunk.dedup();
+            std::io::Cursor::<Vec<LongKmer::<B>>>::new(dd_chunk)
+        } else {
+            std::io::Cursor::<Vec<LongKmer::<B>>>::new(chunk.to_vec())
+        }
     }).collect::<Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>>()
 }
 
-// Overwrite the files with sorted and deduplicates files. Returns back the files after overwriting.
-pub fn par_sort_and_dedup_bin_files<const B: usize>(bin_files: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>, _mem_gb: usize, _n_threads: usize) {
-    log::info!("Sorting k-mer bins");
-    bin_files.par_iter_mut().for_each(|f| {
+// Overwrite the bins with sorted and deduplicates files. Returns back the files after overwriting.
+pub fn par_sort_and_dedup_bin_files<const B: usize>(
+    bins: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>,
+) {
+   bins.par_iter_mut().for_each(|f| {
         f.get_mut().sort_unstable();
         f.get_mut().dedup();
         f.set_position(0);
     });
 }
 
-// The original files are deleted
-#[allow(dead_code)]
-pub fn concat_files(infiles: Vec<TempFile>, out_writer: &mut impl std::io::Write){
-    let mut bw = BufWriter::new(out_writer);
-    for mut fp in infiles {
-        let mut reader = std::io::BufReader::new(&mut fp.file);
-        std::io::copy(&mut reader, &mut bw).unwrap();
-        drop(fp);
-    }
-    bw.flush().unwrap();
-}
-
-// The original files are deleted
-pub fn concat_files_take<const B: usize>(infiles: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>) -> std::io::Cursor::<Vec<LongKmer::<B>>> {
-    let concat_kmers = infiles.par_iter().map(|file| {
+// The original data are deleted
+pub fn concat_files<const B: usize>(
+    binned_kmers: &mut Vec<std::io::Cursor::<Vec<LongKmer::<B>>>>
+) -> std::io::Cursor::<Vec<LongKmer::<B>>> {
+    let concat_kmers = binned_kmers.par_iter().map(|file| {
 
         // TODO should move here
 
         file.get_ref().clone()
     }).flatten().collect::<Vec<LongKmer::<B>>>();
     std::io::Cursor::<Vec<LongKmer::<B>>>::new(Vec::from(concat_kmers))
-}
-
-mod tests {
-    #[test]
-    fn test_colex_sorted_binmers(){
-        let binmers = super::colex_sorted_binmers(2);
-        let ans = vec![b"AA", b"CA", b"GA", b"TA", b"AC", b"CC", b"GC", b"TC", b"AG", b"CG", b"GG", b"TG", b"AT", b"CT", b"GT", b"TT"];
-        assert_eq!(binmers, ans);
-    }
 }
