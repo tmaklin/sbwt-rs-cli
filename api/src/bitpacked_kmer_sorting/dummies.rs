@@ -92,7 +92,7 @@ pub fn get_sorted_dummies<const B: usize>(
     // later, which adds one "ghost dollar" count to all counts.
     required_dummies.push((LongKmer::<B>::from_ascii(b"").unwrap(), 0));
 
-    required_dummies.par_sort();
+    required_dummies.par_sort_unstable();
     required_dummies.dedup();
     required_dummies.shrink_to_fit();
 
