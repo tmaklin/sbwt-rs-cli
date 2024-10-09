@@ -77,27 +77,25 @@ pub fn read_kmer_or_dummy<const B: usize>(
     kmers: &mut std::io::Cursor<Vec<LongKmer<B>>>,
     dummies: &mut std::io::Cursor<Vec<(LongKmer<B>, u8)>>,
     k: usize,
-) -> Option<(LongKmer<B>, u8)> {
+) -> (LongKmer<B>, u8) {
     let n_kmers = kmers.get_ref().len();
     let n_dummies = dummies.get_ref().len();
     let kmers_pos = kmers.position() as usize;
     let dummies_pos = dummies.position() as usize;
 
-    if kmers_pos >= n_kmers && dummies_pos >= n_dummies {
-        None
-    } else if kmers_pos == n_kmers {
+    if kmers_pos == n_kmers {
         dummies.set_position(dummies_pos as u64 + 1);
-        Some(dummies.get_ref()[dummies_pos])
+        dummies.get_ref()[dummies_pos]
     } else if dummies_pos == n_dummies {
         kmers.set_position(kmers_pos as u64 + 1);
-        Some((kmers.get_ref()[kmers_pos], k as u8))
+        (kmers.get_ref()[kmers_pos], k as u8)
     } else {
         if dummies.get_ref()[dummies_pos] < (kmers.get_ref()[kmers_pos], k as u8) {
             dummies.set_position(dummies_pos as u64 + 1);
-            Some(dummies.get_ref()[dummies_pos])
+            dummies.get_ref()[dummies_pos]
         } else {
             kmers.set_position(kmers_pos as u64 + 1);
-            Some((kmers.get_ref()[kmers_pos], k as u8))
+            (kmers.get_ref()[kmers_pos], k as u8)
         }
     }
 }
@@ -113,7 +111,7 @@ pub fn build_sbwt_bit_vectors<const B: usize>(
 ) -> (Vec<simple_sds_sbwt::raw_vector::RawVector>, Option<simple_sds_sbwt::int_vector::IntVector>) {
 
     let merged = std::io::Cursor::new(Vec::from((0..n).map(|_| {
-        read_kmer_or_dummy(kmers, dummies, k).unwrap()
+        read_kmer_or_dummy(kmers, dummies, k)
     }).collect::<Vec<(LongKmer::<B>, u8)>>()));
 
     let rawrows = (0..sigma).collect::<Vec<usize>>().into_par_iter().map(|c|{
